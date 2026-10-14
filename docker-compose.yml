@@ -1,3 +1,4 @@
+
 services:
   db:
     image: postgres:16
@@ -8,16 +9,20 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tickets"]
+      test: ["CMD-SHELL", "pg_isready -U tickets -d tickets"]
       interval: 5s
+      timeout: 5s
       retries: 10
+    networks:
+      - nginx_network
 
   api:
     build: .
     depends_on:
       db:
         condition: service_healthy
-    env_file: .env
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgresql+psycopg2://tickets:tickets@db:5432/tickets
       UPLOAD_DIR: /srv/uploads
@@ -27,12 +32,10 @@ services:
       - uploads:/srv/uploads
     networks:
       - nginx_network
+
 volumes:
   pgdata:
   uploads:
-
-
-
 
 networks:
   nginx_network:
