@@ -17,31 +17,54 @@ from .security import hash_password
 
 logger = logging.getLogger("tickets")
 
-
 def bootstrap_admin() -> None:
-    """Create the first admin from FIRST_ADMIN_* when the system has no admin yet."""
+    """Create the first admin if no admin exists yet."""
     with SessionLocal() as db:
-        if db.scalar(select(User.id).where(User.role == Role.ADMIN).limit(1)):
+        email = settings.FIRST_ADMIN_EMAIL.strip().lower()
+
+        admin_exists = db.scalar(
+            select(User.id)
+            .where(User.role == Role.ADMIN)
+            .limit(1)
+        )
+
+        if admin_exists:
             return
+
         db.add(
             User(
                 name=settings.FIRST_ADMIN_NAME,
-                email=settings.FIRST_ADMIN_EMAIL.strip().lower(),
-                hashed_password=hash_password(settings.FIRST_ADMIN_PASSWORD),
+                email=email,
+                hashed_password=hash_password(
+                    settings.FIRST_ADMIN_PASSWORD
+                ),
                 role=Role.ADMIN,
                 designation="Administrator",
             )
         )
         db.commit()
-        logger.warning("Created first admin %s - change its password now.", settings.FIRST_ADMIN_EMAIL)
+
+        logger.warning(
+            "Created first admin %s - change its password now.",
+            email,
+        )
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     if settings.SECRET_KEY == "change-me":
-        logger.warning("SECRET_KEY is the default value - set a strong one before going to production.")
-    Base.metadata.create_all(bind=engine)  # use Alembic migrations once the schema starts changing
-    Path(settings.UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
+        logger.warning(
+            "SECRET_KEY is the default value - "
+            "set a strong one before going to production."
+        )
+
+    # Database tables must already exist.
+    # Run Alembic migrations before starting the API.
+    Path(settings.UPLOAD_DIR).mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
     bootstrap_admin()
     yield
 
