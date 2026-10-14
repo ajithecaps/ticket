@@ -1,0 +1,5 @@
+-r requirements.txt
+pytest>=8.0
+# FastAPI's TestClient: recent Starlette needs httpx2, older releases use httpx
+httpx2>=2.0; python_version >= "3.10"
+httpx>=0.27
