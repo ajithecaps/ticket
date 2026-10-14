@@ -22,7 +22,7 @@ services:
       DATABASE_URL: postgresql+psycopg2://tickets:tickets@db:5432/tickets
       UPLOAD_DIR: /srv/uploads
     ports:
-      - "8000:8000"
+      - "28001:8000"
     volumes:
       - uploads:/srv/uploads
     networks:
