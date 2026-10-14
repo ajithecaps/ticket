@@ -25,7 +25,15 @@ services:
       - "8000:8000"
     volumes:
       - uploads:/srv/uploads
-
+    networks:
+      - nginx_network
 volumes:
   pgdata:
   uploads:
+
+
+
+
+networks:
+  nginx_network:
+    external: true
