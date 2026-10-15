@@ -10,3 +10,6 @@ bcrypt>=4.1
 psycopg2-binary>=2.9
 # IANA time zones on systems without them (e.g. slim Docker images)
 tzdata>=2024.1
+
+# Database migrations (run "alembic upgrade head" before starting the API)
+alembic>=1.13

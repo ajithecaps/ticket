@@ -766,3 +766,80 @@ def test_create_and_update_always_notify(client, admin, world, monkeypatch):
     slack.flush()
     assert client.get(f"{API}/notifications", headers=kiran["headers"]).json()["total"] == before and sent == []
     assert t["id"]
+
+
+# --------------------------------------------------------------------------- #
+# Upcoming tasks
+# --------------------------------------------------------------------------- #
+def test_upcoming_tasks(client, admin, world, tmp_path):
+    ravi, asha, zed, pay = world["ravi"], world["asha"], world["zed"], world["pay"]
+    body = {
+        "title": "Recurring payments",
+        "priority": "high",
+        "target_date": iso(days=30),
+        "requirements": "Users can schedule **monthly** payments.",
+        "acceptance_criteria": "- [x] Schedule a payment\n- [ ] Cancel a schedule\n- [ ] Email receipt",
+        "reference_links": [{"title": "Spec", "url": "https://example.com/spec"}],
+    }
+
+    # only admins create; owners and developers cannot
+    assert client.post(f"{API}/projects/{pay['id']}/upcoming", headers=ravi["headers"], json=body).status_code == 403
+    bad = {**body, "reference_links": [{"title": "x", "url": "javascript:alert(1)"}]}
+    assert client.post(f"{API}/projects/{pay['id']}/upcoming", headers=admin, json=bad).status_code == 422
+    r = client.post(f"{API}/projects/{pay['id']}/upcoming", headers=admin, json=body)
+    assert r.status_code == 201, r.text
+    task = r.json()
+    assert task["status"] == "draft" and task["criteria_total"] == 3 and task["criteria_done"] == 1
+    assert task["can_edit"] is True and task["ticket"] is None
+
+    # owners are told about it
+    n = client.get(f"{API}/notifications", headers=ravi["headers"]).json()["items"][0]
+    assert n["type"] == "upcoming" and "Recurring payments" in n["message"]
+
+    # members can read; non-members get 404; nobody but admin edits
+    seen = client.get(f"{API}/upcoming/{task['id']}", headers=asha["headers"]).json()
+    assert seen["title"] == "Recurring payments" and seen["can_edit"] is False and seen["can_convert"] is False
+    assert client.get(f"{API}/upcoming/{task['id']}", headers=zed["headers"]).status_code == 404
+    assert client.get(f"{API}/upcoming", headers=zed["headers"]).json() == []
+    assert client.patch(f"{API}/upcoming/{task['id']}", headers=asha["headers"], json={"title": "x"}).status_code == 403
+    assert [t["id"] for t in client.get(f"{API}/projects/{pay['id']}/upcoming", headers=asha["headers"]).json()] == [task["id"]]
+
+    r = client.patch(f"{API}/upcoming/{task['id']}", headers=admin, json={"status": "ready", "reference_links": [
+        {"title": "Spec", "url": "https://example.com/spec"}, {"title": "", "url": "https://example.com/figma"}]})
+    assert r.status_code == 200 and r.json()["status"] == "ready" and len(r.json()["reference_links"]) == 2
+    assert client.patch(f"{API}/upcoming/{task['id']}", headers=admin, json={"status": "converted"}).status_code == 400
+
+    # documents: admin uploads, members download, only admin deletes
+    files = {"files": ("brief.txt", b"requirements brief", "text/plain")}
+    assert client.post(f"{API}/upcoming/{task['id']}/documents", headers=ravi["headers"], files=files).status_code == 403
+    docs = client.post(f"{API}/upcoming/{task['id']}/documents", headers=admin, files=files).json()
+    assert docs[0]["filename"] == "brief.txt"
+    r = client.get(f"{API}/upcoming-documents/{docs[0]['id']}/download", headers=asha["headers"])
+    assert r.status_code == 200 and r.content == b"requirements brief"
+    assert client.get(f"{API}/upcoming-documents/{docs[0]['id']}/download", headers=zed["headers"]).status_code == 404
+    assert client.delete(f"{API}/upcoming-documents/{docs[0]['id']}", headers=asha["headers"]).status_code == 403
+
+    # conversion: developers cannot; an owner can, once
+    owner_view = client.get(f"{API}/upcoming/{task['id']}", headers=ravi["headers"]).json()
+    assert owner_view["can_convert"] is True
+    assert client.post(f"{API}/upcoming/{task['id']}/convert", headers=asha["headers"], json={}).status_code == 403
+    r = client.post(f"{API}/upcoming/{task['id']}/convert", headers=ravi["headers"],
+                    json={"type": "feature", "assignee_id": asha["id"]})
+    assert r.status_code == 200, r.text
+    ticket = r.json()
+    assert ticket["title"] == "Recurring payments" and ticket["priority"] == "high" and ticket["type"] == "feature"
+    assert ticket["assignee"]["id"] == asha["id"] and ticket["due_date"] is not None
+    assert "## Acceptance criteria" in ticket["description"] and "https://example.com/figma" in ticket["description"]
+    assert ticket["attachment_count"] == 1
+    att = client.get(f"{API}/tickets/{ticket['id']}/attachments", headers=asha["headers"]).json()[0]
+    assert client.get(f"{API}/attachments/{att['id']}/download", headers=asha["headers"]).content == b"requirements brief"
+
+    after = client.get(f"{API}/upcoming/{task['id']}", headers=admin).json()
+    assert after["status"] == "converted" and after["ticket"]["key"] == ticket["key"] and after["can_convert"] is False
+    assert client.post(f"{API}/upcoming/{task['id']}/convert", headers=admin, json={}).status_code == 409
+
+    # deleting removes it (the ticket stays)
+    assert client.delete(f"{API}/upcoming/{task['id']}", headers=ravi["headers"]).status_code == 403
+    assert client.delete(f"{API}/upcoming/{task['id']}", headers=admin).status_code == 204
+    assert client.get(f"{API}/upcoming/{task['id']}", headers=admin).status_code == 404
+    assert client.get(f"{API}/tickets/{ticket['id']}", headers=admin).status_code == 200

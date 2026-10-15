@@ -8,6 +8,7 @@ import { renderNotifications, notificationBell } from "./views/notifications.js"
 import { renderUsers } from "./views/users.js";
 import { renderReports, renderDeveloperReport } from "./views/reports.js";
 import { renderIntegrations } from "./views/integrations.js";
+import { renderUpcomingDetail, renderUpcomingPage } from "./views/upcoming.js";
 
 const root = document.getElementById("app");
 const isAdmin = () => auth.user?.role === "admin";
@@ -18,12 +19,14 @@ const routes = [
   [/^\/tickets$/, renderTickets],
   [/^\/tickets\/([A-Za-z][A-Za-z0-9]{1,9}-\d+)$/, (el, [key]) => renderTicket(el, key)],
   [/^\/projects$/, renderProjects],
-  [/^\/projects\/(\d+)(?:\/(board|list|members|settings))?$/, (el, [id, tab]) => renderProject(el, Number(id), tab || "board")],
+  [/^\/projects\/(\d+)(?:\/(board|list|upcoming|members|settings))?$/, (el, [id, tab]) => renderProject(el, Number(id), tab || "board")],
   [/^\/notifications$/, renderNotifications],
   [/^\/users$/, renderUsers, true],
   [/^\/reports$/, renderReports, true],
   [/^\/reports\/(\d+)$/, (el, [id]) => renderDeveloperReport(el, Number(id)), true],
   [/^\/integrations$/, renderIntegrations, true],
+  [/^\/upcoming$/, renderUpcomingPage],
+  [/^\/upcoming\/(\d+)$/, (el, [id]) => renderUpcomingDetail(el, Number(id))],
 ];
 
 let cleanup = null;
@@ -96,6 +99,7 @@ function renderShell() {
     ["/", "Dashboard", "M3 13h8V3H3zm10 8h8V11h-8zM3 21h8v-6H3zm10-18v6h8V3z"],
     ["/tickets", "Tickets", "M4 6h16M4 12h16M4 18h10"],
     ["/projects", "Projects", "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"],
+    ["/upcoming", "Upcoming", "M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4"],
     ["/notifications", "Notifications", "M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10 21h4"],
   ];
   if (isAdmin()) {

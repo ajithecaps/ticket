@@ -9,6 +9,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    JSON,
     String,
     Table,
     Text,
@@ -71,6 +72,16 @@ class NotificationType(str, enum.Enum):
     MENTION = "mention"
     PROJECT_MEMBER = "project_member"
     OVERDUE = "overdue"
+    UPCOMING = "upcoming"
+
+
+class UpcomingStatus(str, enum.Enum):
+    """Planning stages of an upcoming task (requirements gathered before any ticket exists)."""
+
+    DRAFT = "draft"  # still collecting requirements
+    READY = "ready"  # requirements and acceptance criteria agreed
+    CONVERTED = "converted"  # turned into a ticket
+    DROPPED = "dropped"  # will not be done
 
 
 PRIORITY_RANK = {
@@ -332,3 +343,52 @@ class Notification(Base):
 
     actor: Mapped[User | None] = relationship(foreign_keys=[actor_id], lazy="joined")
     ticket: Mapped[Ticket | None] = relationship(lazy="joined")
+
+
+class UpcomingTask(Base):
+    """Planned work for a project, kept apart from tickets until it is ready to be worked on.
+
+    Only admins create and edit these; project members can read them. Converting one creates a normal
+    ticket and links it back here.
+    """
+
+    __tablename__ = "upcoming_tasks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(255))
+    status: Mapped[UpcomingStatus] = enum_column(UpcomingStatus, default=UpcomingStatus.DRAFT, index=True)
+    priority: Mapped[TicketPriority] = enum_column(TicketPriority, default=TicketPriority.MEDIUM)
+    target_date: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    requirements: Mapped[str] = mapped_column(Text, default="")  # Markdown
+    acceptance_criteria: Mapped[str] = mapped_column(Text, default="")  # Markdown, usually a checklist
+    reference_links: Mapped[list] = mapped_column(JSON, default=list)  # [{"title": str, "url": str}]
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    ticket_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tickets.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+    project: Mapped[Project] = relationship(lazy="joined")
+    creator: Mapped[User | None] = relationship(lazy="joined", foreign_keys=[created_by])
+    ticket: Mapped[Ticket | None] = relationship(lazy="joined", foreign_keys=[ticket_id])
+    documents: Mapped[list["UpcomingDocument"]] = relationship(
+        back_populates="task", cascade="all, delete-orphan", order_by="UpcomingDocument.id"
+    )
+
+
+class UpcomingDocument(Base):
+    __tablename__ = "upcoming_documents"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("upcoming_tasks.id", ondelete="CASCADE"), index=True)
+    uploaded_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    filename: Mapped[str] = mapped_column(String(255))
+    stored_name: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(120), default="application/octet-stream")
+    size: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+    task: Mapped[UpcomingTask] = relationship(back_populates="documents")
+    uploader: Mapped[User] = relationship(lazy="joined", foreign_keys=[uploaded_by])

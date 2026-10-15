@@ -35,6 +35,7 @@ cp .env.example .env
 python -c "import secrets; print(secrets.token_urlsafe(48))"   # paste into SECRET_KEY
 # edit FIRST_ADMIN_EMAIL / FIRST_ADMIN_PASSWORD too
 
+alembic upgrade head        # create / update the database tables
 uvicorn app.main:app --reload
 ```
 
@@ -199,6 +200,8 @@ app/
   efficiency.py    the metric calculations
   slack.py         Slack client + mirroring notifications after commit
   jobs.py          overdue alerts, daily summary, scheduler thread
+  routers/upcoming.py  upcoming tasks (requirements before tickets)
+migrations/        Alembic environment and versions (0001 baseline, 0002 upcoming tasks)
   routers/         auth, users, projects, tickets, comments, attachments, notifications, reports
 frontend/          single-page web UI (plain HTML/CSS/JS modules, no build step), served at /
 tests/             14 end-to-end tests against the real API
@@ -227,6 +230,39 @@ committed so the app works offline.
 
 The JWT is kept in `localStorage`. The UI hides actions the API would refuse, but the API remains
 the source of truth for every permission.
+
+## Database migrations
+
+The schema is managed by Alembic; `DATABASE_URL` comes from `.env`.
+
+```bash
+alembic upgrade head                                   # apply everything pending
+alembic current                                        # which revision this database is on
+alembic revision --autogenerate -m "add x to tickets"  # after changing app/models.py - review the file!
+alembic check                                          # fails if models and migrations disagree
+```
+
+`0001_baseline` creates only the tables that are missing, so databases created before migrations
+existed (by the old `create_all()` or `seed.py`) upgrade without a manual `alembic stamp`. The Docker
+image runs `alembic upgrade head` before starting uvicorn, and the tests build their database through
+the same migrations.
+
+## Upcoming tasks
+
+Planned work per project that is **not a ticket yet** - a place to collect requirements (Markdown),
+acceptance criteria (a checklist with a progress meter), reference links and documents.
+
+- **Admins** create, edit, upload documents and delete. **Project members** can read them (non-members
+  get 404, like tickets). Statuses: `draft → ready`, or `dropped`.
+- Project owners are notified (in-app and Slack) when one is added and when it is marked ready.
+- **Convert to ticket** (admin or project owner) creates a normal ticket with the same title and
+  priority, the target date as due date, and the requirements, acceptance criteria and references in
+  its description; documents are copied as ticket attachments. The upcoming task is marked
+  `converted` and links to the ticket.
+- UI: **Upcoming** in the sidebar (all projects, grouped) and an **Upcoming** tab on each project.
+- API: `GET /upcoming` · `GET|POST /projects/{id}/upcoming` · `GET|PATCH|DELETE /upcoming/{id}` ·
+  `POST /upcoming/{id}/documents` · `GET /upcoming-documents/{id}/download` ·
+  `DELETE /upcoming-documents/{id}` · `POST /upcoming/{id}/convert`
 
 ## Slack
 
@@ -260,9 +296,8 @@ picks it); if you run the API on several hosts, set `SCHEDULER_ENABLED=false` on
 
 ## Notes before production
 
-- **Migrations.** The app calls `create_all()` on startup, which is fine until the schema changes.
-  Add Alembic (`alembic init migrations`, point it at `app.database.Base.metadata`) before the first
-  schema change in production, and drop the `create_all()` call.
+- **Migrations** are Alembic (`migrations/versions/`). Run `alembic upgrade head` before starting the
+  API - the Docker image does this on every start. The app itself never creates tables.
 - **Files.** Attachments are stored on local disk under `UPLOAD_DIR/<ticket_id>/` with randomised
   names, served only through the authenticated download endpoint. For more than one API instance,
   use a shared volume or replace the two helpers in `app/services.py` (`ticket_upload_dir`,

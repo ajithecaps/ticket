@@ -549,6 +549,7 @@ const ACTIONS = {
   attachment_removed: () => "removed attachment",
   time_logged: (a) => `logged ${fmtHours(Number(a.new_value))}`,
   overdue_alert: () => "flagged the ticket as overdue",
+  converted: (a) => `created this ticket from the upcoming task "${a.new_value}"`,
 };
 
 function prettyValue(field, v, people) {
@@ -568,7 +569,7 @@ async function activity(el, t) {
   ]);
   const people = new Map(members.map((u) => [u.id, u.name]));
   [t.reporter, t.assignee].forEach((u) => u && people.set(u.id, u.name));
-  const shown = (a) => !["time_logged", "overdue_alert"].includes(a.action) && (a.old_value || a.new_value);
+  const shown = (a) => !["time_logged", "overdue_alert", "converted"].includes(a.action) && (a.old_value || a.new_value);
   clear(el, items.length
     ? h("ol.timeline", items.map((a) => h("li",
       avatar(a.actor, "sm"),

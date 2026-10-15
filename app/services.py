@@ -63,6 +63,7 @@ def notify(
     message: str,
     ticket: Ticket | None = None,
     slack: bool = True,
+    link: tuple[str, str] | None = None,
 ) -> None:
     """Create one notification per recipient (never for the actor, never twice, only active users).
 
@@ -76,8 +77,10 @@ def notify(
     active_ids = {u.id for u in users}
     # Ticket events always reach the Slack channel, even when nobody gets an in-app notification
     # (e.g. an owner creating an unassigned ticket in a project they own alone).
-    if slack and (users or ticket is not None):
-        slack_queue_notification(db, type=type, message=message, ticket=ticket, recipients=sorted(users, key=lambda u: u.name))
+    if slack and (users or ticket is not None or link is not None):
+        slack_queue_notification(
+            db, type=type, message=message, ticket=ticket, recipients=sorted(users, key=lambda u: u.name), link=link
+        )
     for uid in active_ids:
         db.add(
             Notification(

@@ -660,3 +660,27 @@ th.sortable:hover { color: var(--text); }
 .steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; line-height: 1.6; }
 .steps code, .page-head code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
 .slack-preview { font-size: 14px; line-height: 1.65; background: var(--surface-2); border-radius: 8px; padding: 12px 14px; border-left: 4px solid #4a154b; }
+
+/* ------------------------------------------------------------------ upcoming tasks */
+.up-toolbar { gap: 12px; }
+.up-group { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.up-group h2 { display: flex; align-items: center; margin: 0; }
+.up-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.up-card { display: flex; flex-direction: column; gap: 8px; color: inherit; }
+.up-card:hover { border-color: var(--accent); text-decoration: none; }
+.up-title { font-size: 15px; line-height: 1.35; overflow-wrap: anywhere; }
+.up-meta { gap: 12px; margin-top: auto; }
+.badge.up-draft { background: var(--surface-2); color: var(--muted); }
+.badge.up-ready { background: var(--ok-soft); color: var(--ok); }
+.badge.up-converted { background: var(--accent-soft); color: var(--accent-text); }
+.badge.up-dropped { background: var(--surface-2); color: var(--muted); text-decoration: line-through; }
+.ac-meter { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ac-bar { width: 54px; height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.ac-bar i { display: block; height: 100%; background: var(--ok); }
+.refs { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.ref-rows { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.ref-rows:empty { display: none; }
+.ref-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto; gap: 6px; align-items: center; }
+.ref-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.ref-list li { display: flex; flex-direction: column; overflow-wrap: anywhere; }
+@media (max-width: 600px) { .ref-row { grid-template-columns: 1fr auto; } .ref-row input:first-child { grid-column: 1 / -1; } }

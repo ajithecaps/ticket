@@ -10,6 +10,7 @@ from .models import (
     TicketPriority,
     TicketStatus,
     TicketType,
+    UpcomingStatus,
 )
 
 T = TypeVar("T")
@@ -379,3 +380,99 @@ class OverviewReport(BaseModel):
     by_status: dict[str, int]
     by_priority: dict[str, int]
     by_project: list[ProjectOverview]
+
+
+# --------------------------------------------------------------------------- #
+# Upcoming tasks (requirements gathered before a ticket exists)
+# --------------------------------------------------------------------------- #
+class ReferenceLink(BaseModel):
+    title: str = Field("", max_length=200)
+    url: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("url")
+    @classmethod
+    def _http_only(cls, v: str) -> str:
+        v = v.strip()
+        if not (v.startswith("http://") or v.startswith("https://")):
+            raise ValueError("must start with http:// or https://")
+        return v
+
+    @field_validator("title")
+    @classmethod
+    def _strip(cls, v: str) -> str:
+        return v.strip()
+
+
+class UpcomingCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=255)
+    status: UpcomingStatus = UpcomingStatus.DRAFT
+    priority: TicketPriority = TicketPriority.MEDIUM
+    target_date: datetime | None = None
+    requirements: str = Field("", max_length=50000)
+    acceptance_criteria: str = Field("", max_length=20000)
+    reference_links: list[ReferenceLink] = Field(default_factory=list, max_length=50)
+
+    @field_validator("title")
+    @classmethod
+    def _strip_title(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("title must not be blank")
+        return v
+
+
+class UpcomingUpdate(BaseModel):
+    title: str | None = Field(None, min_length=1, max_length=255)
+    status: UpcomingStatus | None = None
+    priority: TicketPriority | None = None
+    target_date: datetime | None = None
+    requirements: str | None = Field(None, max_length=50000)
+    acceptance_criteria: str | None = Field(None, max_length=20000)
+    reference_links: list[ReferenceLink] | None = Field(None, max_length=50)
+
+
+class UpcomingDocumentOut(ORMModel):
+    id: int
+    task_id: int
+    filename: str
+    content_type: str
+    size: int
+    uploader: UserBrief
+    created_at: datetime
+
+
+class TicketRef(ORMModel):
+    id: int
+    key: str
+    status: TicketStatus
+
+
+class UpcomingOut(ORMModel):
+    id: int
+    project: ProjectBrief
+    title: str
+    status: UpcomingStatus
+    priority: TicketPriority
+    target_date: datetime | None = None
+    requirements: str
+    acceptance_criteria: str
+    reference_links: list[ReferenceLink] = []
+    creator: UserBrief | None = None
+    ticket: TicketRef | None = None
+    documents: list[UpcomingDocumentOut] = []
+    criteria_total: int = 0  # "- [ ]" / "- [x]" items in the acceptance criteria
+    criteria_done: int = 0
+    can_edit: bool = False  # admins only
+    can_convert: bool = False  # admins and project owners, until it has a ticket
+    created_at: datetime
+    updated_at: datetime
+
+
+class ConvertIn(BaseModel):
+    """Optional overrides when an upcoming task becomes a ticket."""
+
+    type: TicketType = TicketType.FEATURE
+    assignee_id: int | None = None
+    due_date: datetime | None = None
+    estimated_hours: float | None = Field(None, ge=0, le=10000)
+    copy_documents: bool = True

@@ -7,11 +7,14 @@ Everyone's password is Passw0rd!23 - the admin keeps the one from FIRST_ADMIN_PA
 """
 import argparse
 import sys
+from pathlib import Path
 from datetime import timedelta
 
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import select
 
-from app.database import Base, SessionLocal, engine
+from app.database import SessionLocal
 from app.models import (
     Project,
     ProjectMember,
@@ -38,7 +41,8 @@ PEOPLE = [
 
 
 def main(reset: bool) -> None:
-    Base.metadata.create_all(bind=engine)
+    # Same schema path as production: apply the Alembic migrations.
+    command.upgrade(Config(str(Path(__file__).resolve().parent / "alembic.ini")), "head")
     now = utcnow()
 
     with SessionLocal() as db:

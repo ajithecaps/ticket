@@ -21,6 +21,7 @@ async function open(n) {
     try { await api.post(`/notifications/${n.id}/read`); changed(); } catch { /* not fatal */ }
   }
   if (n.ticket_key) navigate(`/tickets/${n.ticket_key}`);
+  else if (n.type === "upcoming") navigate("/upcoming");
 }
 
 /** Topbar bell: unread badge (polled) plus a dropdown with the latest few. */

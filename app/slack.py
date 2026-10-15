@@ -40,6 +40,7 @@ EMOJI = {
     NotificationType.MENTION: ":speech_balloon:",
     NotificationType.PROJECT_MEMBER: ":busts_in_silhouette:",
     NotificationType.OVERDUE: ":alarm_clock:",
+    NotificationType.UPCOMING: ":clipboard:",
 }
 
 
@@ -194,6 +195,7 @@ class _Event:
     ticket_key: str | None
     ticket_title: str | None
     recipients: list[tuple[str, str]]  # (name, email)
+    link: tuple[str, str] | None = None  # (url, label) for events that are not about a ticket
 
 
 def wants(type_: NotificationType) -> bool:
@@ -201,7 +203,7 @@ def wants(type_: NotificationType) -> bool:
     return settings.slack_enabled and (allowed is None or type_.value in allowed)
 
 
-def queue_notification(db: Session, *, type: NotificationType, message: str, ticket, recipients) -> None:
+def queue_notification(db: Session, *, type: NotificationType, message: str, ticket, recipients, link=None) -> None:
     """Called by services.notify(); held on the session until it commits."""
     if not wants(type):
         return
@@ -212,7 +214,7 @@ def queue_notification(db: Session, *, type: NotificationType, message: str, tic
         except Exception:  # noqa: BLE001 - a missing project relation must not break the request
             key = None
     db.info.setdefault("slack_events", []).append(
-        _Event(type, message, key, title, [(u.name, u.email) for u in recipients])
+        _Event(type, message, key, title, [(u.name, u.email) for u in recipients], link)
     )
 
 
@@ -237,6 +239,8 @@ def _render(e: _Event) -> str:
         text = text.replace(plain, ticket_link(e.ticket_key, e.ticket_title), 1) if plain in text else (
             f"{text} - {ticket_link(e.ticket_key)}"
         )
+    if e.link:
+        text += f" - <{e.link[0]}|{escape(e.link[1])}>"
     line = f"{EMOJI.get(e.type, ':bell:')} {text}"
     if e.recipients:
         line += "\n> For " + ", ".join(person(n, m) for n, m in e.recipients)

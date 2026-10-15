@@ -14,7 +14,9 @@ from .config import settings
 from .database import Base, SessionLocal, engine
 from .models import Role, User
 from .jobs import scheduler
-from .routers import attachments, auth, comments, integrations, notifications, projects, reports, tickets, users
+from .routers import (
+    attachments, auth, comments, integrations, notifications, projects, reports, tickets, upcoming, users,
+)
 from .security import hash_password
 
 logger = logging.getLogger("tickets")
@@ -97,7 +99,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for module in (auth, users, projects, tickets, comments, attachments, notifications, reports, integrations):
+for module in (auth, users, projects, tickets, comments, attachments, notifications, reports, integrations, upcoming):
     app.include_router(module.router, prefix=settings.API_PREFIX)
 
 
