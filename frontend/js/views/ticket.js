@@ -1,7 +1,7 @@
 import { api, auth } from "../api.js";
 import { navigate } from "../app.js";
 import {
-  PRIORITIES, STATUSES, TYPES, avatar, busy, clear, confirmDialog, field, fmtBytes, fmtDate, fmtDateTime,
+  PRIORITIES, STATUSES, TYPES, avatar, busy, clear, confirmDialog, copyText, field, markdownEditor, renderMarkdown, fmtBytes, fmtDate, fmtDateTime,
   fmtHours, formData, fromDateInput, h, label, modal, priorityBadge, select, statusBadge, timeAgo,
   toDateInput, toast, typeBadge, userChip, userPicker,
 } from "../ui.js";
@@ -26,10 +26,11 @@ export function newTicketDialog(projects, preselect, ctx) {
       userPicker((q) => api.get("/users/lookup", { q, project_id: p.id, limit: 10 }), (u) => { assignee = u; }, { allowNone: true, placeholder: "Unassigned" })));
   }
 
+  const descEditor = markdownEditor({ rows: 7, label: "Description", placeholder: "Steps to reproduce, acceptance criteria, links… Markdown is supported." });
   const form = h("form.form",
     projects.length > 1 ? field("Project", projectSel) : null,
     field("Title", h("input", { name: "title", required: true, maxLength: 255, placeholder: "Short summary" })),
-    field("Description", h("textarea", { name: "description", rows: 6, maxLength: 20000, placeholder: "Steps to reproduce, acceptance criteria, links…" })),
+    h("div.field", h("span.field-label", "Description"), descEditor.el),
     h("div.grid-3.tight",
       field("Type", select("type", TYPES, "task")),
       field("Priority", select("priority", PRIORITIES, "medium")),
@@ -45,7 +46,7 @@ export function newTicketDialog(projects, preselect, ctx) {
     e.preventDefault();
     const d = formData(form);
     const body = {
-      title: d.title, description: d.description, type: d.type, priority: d.priority,
+      title: d.title, description: descEditor.value, type: d.type, priority: d.priority,
       due_date: fromDateInput(d.due_date),
       estimated_hours: d.estimated_hours === "" ? null : Number(d.estimated_hours),
     };
@@ -95,8 +96,10 @@ export async function renderTicket(main, key) {
         input.select();
       });
     }
-    const statusSel = t.can_change_status
-      ? select("status", STATUSES, t.status, {
+    // Developers work up to "done"; only owners verify, and a verified ticket is locked for developers.
+    const statusOptions = isOwner ? STATUSES : STATUSES.filter((s) => s !== "verified");
+    const statusSel = t.can_change_status && (isOwner || t.status !== "verified")
+      ? select("status", statusOptions, t.status, {
         class: `status-select status-${t.status}`, "aria-label": "Status",
         onchange: (e) => busy(e.target, async () => {
           try {
@@ -111,14 +114,66 @@ export async function renderTicket(main, key) {
       h("div.crumbs",
         h("a", { href: `#/projects/${t.project.id}` }, t.project.name), " / ",
         h("span.key", t.key),
-        h("button.icon-btn.copy", { title: "Copy link", "aria-label": "Copy link", onclick: () => navigator.clipboard?.writeText(location.href).then(() => toast("Link copied")) }, "⧉")),
+        h("button.icon-btn.copy", { title: "Copy link", "aria-label": "Copy link", onclick: () => copyText(ticketUrl(), "Link copied") }, "⧉"),
+        h("button.btn.ghost.sm.copy-key", { title: "Copy key and title", onclick: () => copyText(`${t.key} ${t.title}`, `${t.key} copied`) }, "Copy key")),
       h("div.ticket-head",
         h("div.ticket-head-main", titleEl,
           h("div.row.wrap", typeBadge(t.type), priorityBadge(t.priority),
             t.is_overdue && h("span.badge.danger", "Overdue"),
             t.reopen_count > 0 && h("span.badge", { title: "Times moved out of Done" }, `Reopened ×${t.reopen_count}`))),
         h("div.ticket-head-actions", statusSel,
-          t.can_delete && h("button.btn.ghost.danger.sm", { onclick: del }, "Delete"))));
+          t.can_delete && h("button.btn.ghost.danger.sm", { onclick: del }, "Delete"))),
+      verificationBanner());
+  }
+
+  const ticketUrl = () => `${location.origin}${location.pathname}#/tickets/${t.key}`;
+
+  function verificationBanner() {
+    if (t.status === "verified") {
+      return h("div.banner.verified", h("span.banner-icon", "✓"),
+        h("div", h("strong", "Verified"), h("span.muted", " · checked and closed by the project owner")));
+    }
+    if (t.status !== "done") return null;
+    if (!t.can_verify) {
+      return h("div.banner.pending", h("span.banner-icon", "⏳"),
+        h("div", h("strong", "Waiting for verification"), h("span.muted", " · a project owner will cross-check this work")));
+    }
+    return h("div.banner.pending",
+      h("span.banner-icon", "⏳"),
+      h("div.grow", h("strong", "Ready for verification"),
+        h("div.muted", `${t.assignee ? t.assignee.name : "The assignee"} marked this done. Check the work, then verify it or send it back.`)),
+      h("div.row.wrap",
+        h("button.btn.sm", { onclick: sendBack }, "Send back"),
+        h("button.btn.sm.success", {
+          onclick: (e) => busy(e.currentTarget, async () => {
+            await api.post(`/tickets/${t.id}/status`, { status: "verified" });
+            toast(`${t.key} verified`);
+            await refresh(); loadTab();
+          }),
+        }, "✓ Verify")));
+  }
+
+  function sendBack() {
+    const reason = markdownEditor({ rows: 5, label: "Reason", placeholder: "What still needs to be fixed? (posted as a comment)", autofocus: true });
+    const statusSel2 = select("status", [["in_progress", "In progress"], ["todo", "To do"], ["blocked", "Blocked"]], "in_progress");
+    const form = h("form.form",
+      h("p.muted", `${t.key} goes back to the assignee and counts as a reopen in the efficiency report.`),
+      h("div.field", h("span.field-label", "What needs fixing"), reason.el),
+      field("Move to", statusSel2),
+      h("div.form-actions", h("button.btn.primary", { type: "submit" }, "Send back")));
+    const m = modal("Send back for rework", form, { wide: true });
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      busy(form.querySelector("[type=submit]"), async () => {
+        if (reason.value.trim()) {
+          await api.post(`/tickets/${t.id}/comments`, { body: `**Sent back for rework**\n\n${reason.value.trim()}`, mention_user_ids: t.assignee ? [t.assignee.id] : [] });
+        }
+        await api.post(`/tickets/${t.id}/status`, { status: statusSel2.value });
+        m.close();
+        toast(`${t.key} sent back`);
+        await refresh(); loadTab();
+      });
+    });
   }
 
   async function del() {
@@ -134,18 +189,17 @@ export async function renderTicket(main, key) {
   function drawDescription() {
     const view = () => clear(description,
       h("div.card-head", h("h2", "Description"), t.can_edit && h("button.btn.sm.ghost", { onclick: edit }, "Edit")),
-      t.description ? h("div.prose", t.description) : h("p.muted", "No description."));
+      t.description ? renderMarkdown(t.description) : h("p.muted", t.can_edit ? "No description yet. Click Edit to add one." : "No description."));
     const edit = () => {
-      const ta = h("textarea", { rows: 10, maxLength: 20000, "aria-label": "Description" }, t.description);
+      const editor = markdownEditor({ value: t.description, rows: 12, label: "Description", autofocus: true });
       clear(description,
         h("div.card-head", h("h2", "Description")),
-        ta,
+        editor.el,
         h("div.form-actions",
           h("button.btn", { onclick: view }, "Cancel"),
           h("button.btn.primary", {
-            onclick: (e) => busy(e.currentTarget, async () => { await api.patch(`/tickets/${t.id}`, { description: ta.value }); await refresh(); }),
+            onclick: (e) => busy(e.currentTarget, async () => { await api.patch(`/tickets/${t.id}`, { description: editor.value }); await refresh(); }),
           }, "Save")));
-      ta.focus();
     };
     view();
   }
@@ -234,6 +288,7 @@ async function comments(el, t, onChange) {
 
   const item = (c) => {
     const body = h("div.comment-body", renderMentions(c.body, c.mentions));
+
     const mine = c.author.id === auth.user.id;
     return h("article.comment",
       avatar(c.author),
@@ -254,7 +309,7 @@ async function comments(el, t, onChange) {
       await comments(el, t, onChange);
     }, { submitLabel: "Save", onCancel: () => comments(el, t, onChange) });
     bodyEl.replaceWith(composer);
-    composer.querySelector("textarea").focus();
+    composer.querySelector("textarea.md-input").focus();
   }
 
   async function deleteComment(c) {
@@ -279,17 +334,33 @@ async function comments(el, t, onChange) {
     h("div.composer-wrap", avatar(auth.user), composer));
 }
 
-/** Render a comment body, highlighting @email mentions of resolved users. */
+/** Render a comment as Markdown, then turn "@email" of resolved mentions into name pills. */
 function renderMentions(body, mentions) {
-  const emails = new Set(mentions.map((m) => m.email.toLowerCase()));
-  const parts = body.split(/(@[\w.+-]+@[\w-]+(?:\.[\w-]+)+)/g);
-  return parts.map((p) => {
-    if (p.startsWith("@") && emails.has(p.slice(1).toLowerCase())) {
-      const u = mentions.find((m) => m.email.toLowerCase() === p.slice(1).toLowerCase());
-      return h("span.mention", { title: u.email }, `@${u.name}`);
+  const el = renderMarkdown(body);
+  const byEmail = new Map(mentions.map((m) => [m.email.toLowerCase(), m]));
+  if (!byEmail.size) return el;
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  // marked may autolink the e-mail part, so also look inside <a href="mailto:...">.
+  el.querySelectorAll('a[href^="mailto:"]').forEach((a) => {
+    const prev = a.previousSibling;
+    const u = byEmail.get(a.textContent.toLowerCase());
+    if (u && prev?.nodeType === 3 && prev.textContent.endsWith("@")) {
+      prev.textContent = prev.textContent.slice(0, -1);
+      a.replaceWith(h("span.mention", { title: u.email }, `@${u.name}`));
     }
-    return p;
   });
+  for (const node of nodes) {
+    if (!node.isConnected || node.parentElement?.closest("code, pre")) continue;
+    const parts = node.textContent.split(/(@[\w.+-]+@[\w-]+(?:\.[\w-]+)+)/g);
+    if (parts.length === 1) continue;
+    node.replaceWith(...parts.map((p) => {
+      const u = p.startsWith("@") && byEmail.get(p.slice(1).toLowerCase());
+      return u ? h("span.mention", { title: u.email }, `@${u.name}`) : document.createTextNode(p);
+    }));
+  }
+  return el;
 }
 
 /**
@@ -297,7 +368,9 @@ function renderMentions(body, mentions) {
  * "@email" (which the API also detects) and sent as mention_user_ids.
  */
 function mentionComposer(t, initial, onSubmit, { withFiles = false, submitLabel = "Comment", onCancel } = {}) {
-  const ta = h("textarea", { rows: 3, maxLength: 10000, placeholder: "Write a comment… type @ to mention someone", "aria-label": "Comment" }, initial);
+  const editor = markdownEditor({ value: initial, rows: 4, label: "Comment", placeholder: "Write a comment… Markdown supported, type @ to mention someone" });
+  const ta = editor.textarea;
+  ta.maxLength = 10000;
   const pop = h("ul.picker-list.mention-pop", { role: "listbox" });
   const chosen = new Map();
   let pending = [];
@@ -343,19 +416,22 @@ function mentionComposer(t, initial, onSubmit, { withFiles = false, submitLabel 
       } catch { closePop(); }
     }, 120);
   });
+  // Capture phase so the mention popup gets Enter/arrows before the editor's list handling.
   ta.addEventListener("keydown", (e) => {
     if (pop.classList.contains("open") && items.length) {
-      if (e.key === "ArrowDown") { active = (active + 1) % items.length; drawPop(); e.preventDefault(); return; }
-      if (e.key === "ArrowUp") { active = (active - 1 + items.length) % items.length; drawPop(); e.preventDefault(); return; }
-      if (e.key === "Enter" || e.key === "Tab") { insert(items[active]); e.preventDefault(); return; }
-      if (e.key === "Escape") { closePop(); e.preventDefault(); return; }
+      const handled = ["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key);
+      if (e.key === "ArrowDown") { active = (active + 1) % items.length; drawPop(); }
+      if (e.key === "ArrowUp") { active = (active - 1 + items.length) % items.length; drawPop(); }
+      if (e.key === "Enter" || e.key === "Tab") insert(items[active]);
+      if (e.key === "Escape") closePop();
+      if (handled) { e.preventDefault(); e.stopImmediatePropagation(); return; }
     }
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) form.requestSubmit();
-  });
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); e.stopImmediatePropagation(); form.requestSubmit(); }
+  }, true);
   ta.addEventListener("blur", () => setTimeout(closePop, 120));
 
   const form = h("form.composer",
-    h("div.composer-input", ta, pop),
+    h("div.composer-input", editor.el, pop),
     withFiles && fileList,
     h("div.row.between",
       h("div.row",
@@ -374,7 +450,7 @@ function mentionComposer(t, initial, onSubmit, { withFiles = false, submitLabel 
     const ids = [...chosen.values()].filter((u) => text.includes(`@${u.email}`)).map((u) => u.id);
     busy(form.querySelector("[type=submit]"), async () => {
       await onSubmit(text, ids, pending);
-      ta.value = "";
+      editor.value = "";
       pending = [];
       chosen.clear();
       if (withFiles) drawFiles();

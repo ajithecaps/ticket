@@ -8,6 +8,7 @@ from sqlalchemy import and_, case, func, not_, or_, select
 
 from ..deps import CurrentUser, DbSession
 from ..models import (
+    CLOSED_STATUSES,
     PRIORITY_RANK,
     Activity,
     Comment,
@@ -132,7 +133,7 @@ def _apply_filters(stmt, f: TicketFilters):
         stmt = stmt.where(Ticket.assignee_id.is_not(None))
 
     overdue_cond = and_(
-        Ticket.due_date.is_not(None), Ticket.due_date < now, Ticket.status != TicketStatus.DONE
+        Ticket.due_date.is_not(None), Ticket.due_date < now, Ticket.status.not_in(CLOSED_STATUSES)
     )
     if f.overdue is True:
         stmt = stmt.where(overdue_cond)
@@ -187,6 +188,7 @@ def _detail(db, user, ticket: Ticket) -> TicketDetail:
     detail.can_assign = perms["can_assign"]
     detail.can_change_status = perms["can_change_status"]
     detail.can_delete = perms["can_delete"]
+    detail.can_verify = perms["owner"] and ticket.status == TicketStatus.DONE
     detail.comment_count = db.scalar(
         select(func.count()).select_from(Comment).where(Comment.ticket_id == ticket.id)
     ) or 0
@@ -254,7 +256,7 @@ def my_ticket_summary(user: CurrentUser, db: DbSession):
                 *mine,
                 Ticket.due_date.is_not(None),
                 Ticket.due_date < now,
-                Ticket.status != TicketStatus.DONE,
+                Ticket.status.not_in(CLOSED_STATUSES),
             )
             .group_by(Ticket.project_id)
         ).all()
@@ -278,7 +280,7 @@ def my_ticket_summary(user: CurrentUser, db: DbSession):
             ProjectTicketSummary(
                 project=ProjectBrief.model_validate(projects[pid]),
                 total=total,
-                open=total - counts[TicketStatus.DONE.value],
+                open=total - sum(counts[s.value] for s in CLOSED_STATUSES),
                 overdue=overdue_rows.get(pid, 0),
                 by_status=counts,
             )
@@ -286,7 +288,7 @@ def my_ticket_summary(user: CurrentUser, db: DbSession):
     grand = sum(totals.values())
     return MyTicketSummary(
         total=grand,
-        open=grand - totals[TicketStatus.DONE.value],
+        open=grand - sum(totals[s.value] for s in CLOSED_STATUSES),
         overdue=sum(overdue_rows.values()),
         by_status=totals,
         by_project=by_project,
@@ -433,7 +435,7 @@ def assign_ticket(ticket_id: int, payload: AssignIn, user: CurrentUser, db: DbSe
     ticket = get_ticket_for_user(db, ticket_id, user)
     if not ticket_permissions(db, user, ticket)["can_assign"]:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only project owners can assign tickets")
-    if ticket.status == TicketStatus.DONE:
+    if ticket.status in CLOSED_STATUSES:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Reopen the ticket before reassigning it")
 
     new_id, old_id = payload.assignee_id, ticket.assignee_id
@@ -465,13 +467,25 @@ def assign_ticket(ticket_id: int, payload: AssignIn, user: CurrentUser, db: DbSe
 
 @router.post("/tickets/{ticket_id}/status", response_model=TicketDetail, summary="Change status (assignee / owners)")
 def change_status(ticket_id: int, payload: StatusChange, user: CurrentUser, db: DbSession):
+    """Developers move their tickets up to *done*; a project owner then cross-checks the work and either
+    moves it to *verified* (closed) or sends it back (any other status, which counts as a reopen)."""
     ticket = get_ticket_for_user(db, ticket_id, user)
-    if not ticket_permissions(db, user, ticket)["can_change_status"]:
+    perms = ticket_permissions(db, user, ticket)
+    if not perms["can_change_status"]:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the assignee or a project owner can change the status")
 
     new, old = payload.status, ticket.status
     if new == old:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Ticket is already {old.value}")
+    if new == TicketStatus.VERIFIED:
+        if not perms["owner"]:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a project owner can verify a ticket")
+        if old != TicketStatus.DONE:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only a ticket marked done can be verified")
+    if old == TicketStatus.VERIFIED and not perms["owner"]:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "This ticket has been verified - ask a project owner to reopen it"
+        )
     if ticket.assignee_id is None and new in (
         TicketStatus.IN_PROGRESS, TicketStatus.IN_REVIEW, TicketStatus.DONE
     ):
@@ -481,12 +495,17 @@ def change_status(ticket_id: int, payload: StatusChange, user: CurrentUser, db: 
     log_activity(db, ticket, user, "status_changed", "status", old, new)
 
     recipients = [ticket.reporter_id, ticket.assignee_id]
-    if new in (TicketStatus.BLOCKED, TicketStatus.IN_REVIEW, TicketStatus.DONE) or old == TicketStatus.DONE:
+    if new in (TicketStatus.BLOCKED, TicketStatus.IN_REVIEW, TicketStatus.DONE) or old in CLOSED_STATUSES:
         recipients += project_owner_ids(db, ticket.project_id)
-    notify(
-        db, recipients, actor=user, type=NotificationType.STATUS_CHANGED,
-        message=f"{user.name} moved {_label(ticket)} from {old.value} to {new.value}", ticket=ticket,
-    )
+    if new == TicketStatus.DONE:
+        message = f"{user.name} marked {_label(ticket)} done - ready for verification"
+    elif new == TicketStatus.VERIFIED:
+        message = f"{user.name} verified {_label(ticket)}"
+    elif old == TicketStatus.DONE:
+        message = f"{user.name} sent {_label(ticket)} back to {new.value} after review"
+    else:
+        message = f"{user.name} moved {_label(ticket)} from {old.value} to {new.value}"
+    notify(db, recipients, actor=user, type=NotificationType.STATUS_CHANGED, message=message, ticket=ticket)
     db.commit()
     db.refresh(ticket)
     return _detail(db, user, ticket)

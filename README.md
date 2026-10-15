@@ -119,10 +119,18 @@ Filters on every list: `status`, `priority`, `type` (repeatable), `assignee_id`,
 ### Ticket keys and status flow
 
 Each ticket gets a per-project number, so keys read `PAY-1`, `PAY-2`, `OPS-1`. Statuses are
-`todo → in_progress → in_review → done`, plus `blocked`. Any transition is allowed except:
+`todo → in_progress → in_review → done → verified`, plus `blocked`.
+
+**Verification.** Developers move their own tickets up to `done`. A project owner then cross-checks the
+work and either moves it to `verified` (closed) or sends it back to an earlier status, which counts as a
+reopen. Only owners/admins can set `verified`, only from `done`, and a verified ticket can only be
+reopened by an owner. Both `done` and `verified` count as finished for open/overdue counts and the
+efficiency report, and verifying keeps the developer's original `completed_at`.
+
+Any other transition is allowed except:
 
 - a ticket with no assignee cannot move to `in_progress`, `in_review` or `done`;
-- a `done` ticket must be reopened before it can be reassigned.
+- a `done` or `verified` ticket must be reopened before it can be reassigned.
 
 Moving out of `done` increments `reopen_count` (this is what the first-time-right metric reads).
 Reassigning clears `started_at` and sends the ticket back to `todo`, so the new assignee is not
@@ -203,13 +211,17 @@ There is nothing to install or build: edit a file and reload the page. Routing i
 
 | Page | Who | What |
 |---|---|---|
-| Dashboard | everyone | my open work, blocked/overdue counts, per-project summary; owners see unassigned tickets, admins see company-wide numbers |
+| Dashboard | everyone | my open work, blocked/overdue counts, per-project summary; owners see tickets waiting for verification, overdue tickets filterable by person and unassigned tickets; admins see company-wide numbers |
 | Tickets | everyone | every visible ticket with search, status/priority/type/assignee/overdue filters and sorting |
 | Projects → Board | members | Kanban by status; drag a card to change status |
 | Projects → List / Members / Settings | members / owners | filtered list; add, remove, promote members; rename, archive |
 | Ticket | members | inline edits (per permission), assign, status, comments with `@` autocomplete, file upload/download, work log, history |
 | Notifications | everyone | bell with unread count (polled every 30 s) and a full list |
 | People, Reports | admin | user accounts; efficiency table with date/project filters and per-developer drill-down |
+
+Descriptions and comments are Markdown (GFM) with a Write / Preview editor; rendering uses
+`frontend/vendor/marked.min.js` and `purify.min.js` (DOMPurify sanitises every rendered note), both
+committed so the app works offline.
 
 The JWT is kept in `localStorage`. The UI hides actions the API would refuse, but the API remains
 the source of truth for every permission.

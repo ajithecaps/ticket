@@ -1,7 +1,7 @@
 import { api, auth } from "../api.js";
 import { navigate } from "../app.js";
 import {
-  STATUSES, avatar, busy, clear, confirmDialog, emptyState, errorBox, field, fmtDate, formData, h, label,
+  CLOSED, STATUSES, avatar, busy, clear, confirmDialog, emptyState, errorBox, field, fmtDate, formData, h, label,
   modal, priorityBadge, select, spinner, timeAgo, toast, typeBadge, userPicker,
 } from "../ui.js";
 import { filteredTicketList } from "./ticketlist.js";
@@ -96,7 +96,7 @@ export async function renderProject(main, id, tab) {
       h(`a${key === tab ? ".active" : ""}`, { href: `#/projects/${id}${key === "board" ? "" : "/" + key}`, "aria-current": key === tab ? "page" : null }, text))),
     body);
 
-  if (tab === "board") await renderBoard(body, project);
+  if (tab === "board") await renderBoard(body, project, owner);
   else if (tab === "list") {
     clear(body, filteredTicketList({
       endpoint: `/projects/${id}/tickets`,
@@ -107,7 +107,7 @@ export async function renderProject(main, id, tab) {
   else if (tab === "settings" && owner) renderSettings(body, project);
 }
 
-async function renderBoard(body, project) {
+async function renderBoard(body, project, owner) {
   const filterBar = h("div.board-filters");
   const board = h("div.board");
   clear(body, filterBar, board);
@@ -120,7 +120,7 @@ async function renderBoard(body, project) {
     try {
       // One page of up to 200 per status keeps "done" from crowding out active work.
       const pages = await Promise.all(STATUSES.map((s) => api.get(`/projects/${project.id}/tickets`, {
-        status: s, sort: s === "done" ? "updated_at" : "priority", limit: s === "done" ? 30 : 200,
+        status: s, sort: CLOSED.includes(s) ? "updated_at" : "priority", limit: CLOSED.includes(s) ? 30 : 200,
         assignee_id: mineOnly ? auth.user.id : undefined,
       })));
       tickets = pages.flatMap((p) => p.items);
@@ -177,7 +177,9 @@ async function renderBoard(body, project) {
 
   clear(filterBar,
     h("label.check", h("input", { type: "checkbox", onchange: (e) => { mineOnly = e.target.checked; load(); } }), "Only my tickets"),
-    h("span.muted.small", "Drag a card to change its status."));
+    h("span.muted.small", owner
+      ? "Drag a card to change its status. Review tickets in Done, then move them to Verified."
+      : "Drag a card to change its status. Move finished work to Done for the owner to verify."));
   await load();
 }
 

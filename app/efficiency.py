@@ -25,7 +25,7 @@ from datetime import datetime
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
-from .models import ProjectMember, ProjectRole, Role, Ticket, TicketStatus, User
+from .models import CLOSED_STATUSES, ProjectMember, ProjectRole, Role, Ticket, TicketStatus, User
 from .schemas import (
     DeveloperEfficiency,
     DeveloperEfficiencyDetail,
@@ -65,15 +65,15 @@ def score(completion: float | None, on_time: float | None, first_time_right: flo
 
 
 def _metrics(user: User, tickets: list[Ticket], now: datetime) -> DeveloperEfficiency:
-    done = [t for t in tickets if t.status == TicketStatus.DONE]
-    open_ = [t for t in tickets if t.status != TicketStatus.DONE]
+    done = [t for t in tickets if t.status in CLOSED_STATUSES]
+    open_ = [t for t in tickets if t.status not in CLOSED_STATUSES]
 
     with_due = [t for t in done if t.due_date is not None and t.completed_at is not None]
     on_time = sum(1 for t in with_due if t.completed_at <= t.due_date)
     late = len(with_due) - on_time
 
     reopened = sum(1 for t in tickets if t.reopen_count > 0)
-    ever_done = sum(1 for t in tickets if t.status == TicketStatus.DONE or t.reopen_count > 0)
+    ever_done = sum(1 for t in tickets if t.status in CLOSED_STATUSES or t.reopen_count > 0)
 
     resolution = [
         _hours(t.completed_at - t.assigned_at) for t in done if t.completed_at and t.assigned_at
@@ -197,7 +197,7 @@ def build_detail(
         per_project[t.project_id].append(t)
     breakdown = []
     for pid, items in sorted(per_project.items(), key=lambda kv: items_name(kv[1])):
-        done = sum(1 for t in items if t.status == TicketStatus.DONE)
+        done = sum(1 for t in items if t.status in CLOSED_STATUSES)
         breakdown.append(
             ProjectBreakdown(
                 project=ProjectBrief.model_validate(items[0].project),
@@ -205,7 +205,7 @@ def build_detail(
                 completed=done,
                 open=len(items) - done,
                 overdue_open=sum(
-                    1 for t in items if t.status != TicketStatus.DONE and t.due_date and t.due_date < now
+                    1 for t in items if t.status not in CLOSED_STATUSES and t.due_date and t.due_date < now
                 ),
             )
         )

@@ -4,12 +4,14 @@ import { filteredTicketList } from "./ticketlist.js";
 import { newTicketDialog } from "./ticket.js";
 
 export async function renderTickets(main) {
-  const projects = await api.get("/projects");
+  // Everyone the caller may see: admins get all active users, others the people they share a project with.
+  const [projects, people] = await Promise.all([api.get("/projects"), api.get("/users/lookup", { limit: 50 })]);
   const projectFilter = new URLSearchParams(location.hash.split("?")[1] || "").get("project") || "";
 
   const body = h("div");
   const mount = (projectId) => clear(body, filteredTicketList({
     endpoint: "/tickets",
+    assignees: people.map((u) => [String(u.id), u.name]),
     extraParams: { project_id: projectId || undefined },
   }));
 

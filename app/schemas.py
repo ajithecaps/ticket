@@ -206,6 +206,7 @@ class TicketDetail(TicketOut):
     can_edit: bool = False
     can_assign: bool = False
     can_change_status: bool = False
+    can_verify: bool = False  # owner looking at a ticket the developer marked done
     can_delete: bool = False
 
 

@@ -39,7 +39,12 @@ class TicketStatus(str, enum.Enum):
     IN_PROGRESS = "in_progress"
     BLOCKED = "blocked"
     IN_REVIEW = "in_review"
-    DONE = "done"
+    DONE = "done"  # finished by the developer, waiting for a project owner to cross-check it
+    VERIFIED = "verified"  # checked and accepted by a project owner - the ticket is closed
+
+
+# Both count as "finished" for open/overdue counts and the efficiency metrics.
+CLOSED_STATUSES = (TicketStatus.DONE, TicketStatus.VERIFIED)
 
 
 class TicketPriority(str, enum.Enum):
@@ -220,7 +225,7 @@ class Ticket(Base):
     def is_overdue(self) -> bool:
         return (
             self.due_date is not None
-            and self.status != TicketStatus.DONE
+            and self.status not in CLOSED_STATUSES
             and self.due_date < utcnow()
         )
 

@@ -1,5 +1,5 @@
 import { api, auth } from "../api.js";
-import { STATUSES, clear, h, label } from "../ui.js";
+import { STATUSES, avatar, clear, h, label } from "../ui.js";
 import { ticketTable } from "./ticketlist.js";
 
 const OPEN = ["todo", "in_progress", "blocked", "in_review"];
@@ -29,9 +29,15 @@ export async function renderDashboard(main) {
   ]);
   const owned = projects.filter((p) => p.my_role === "owner" || p.my_role === "admin");
   const ownedIds = new Set(owned.map((p) => p.id));
-  const unassigned = owned.length
-    ? await api.get("/tickets", { unassigned: true, status: ["todo", "blocked"], sort: "priority", limit: 20 })
-    : null;
+  const inOwned = (t) => ownedIds.has(t.project.id);
+  const [unassigned, toVerify, overdue] = owned.length
+    ? await Promise.all([
+      api.get("/tickets", { unassigned: true, status: ["todo", "blocked"], sort: "priority", limit: 20 }),
+      api.get("/tickets", { status: "done", sort: "updated_at", order: "asc", limit: 50 }),
+      api.get("/tickets", { overdue: true, sort: "due_date", order: "asc", limit: 200 }),
+    ])
+    : [null, null, null];
+  const verifyItems = toVerify ? toVerify.items.filter(inOwned) : [];
 
   const first = auth.user.name.split(/\s+/)[0];
   clear(main,
@@ -57,6 +63,15 @@ export async function renderDashboard(main) {
             h("span.muted.small", `${p.open} open`, p.overdue ? h("span.danger-text", ` · ${p.overdue} overdue`) : ""))))
           : h("p.muted", "Nothing is assigned to you yet."))),
 
+    verifyItems.length > 0 && h("section.card.flush.highlight",
+      h("div.card-head",
+        h("h2", "Waiting for your verification ", h("span.badge.accent", String(verifyItems.length))),
+        h("a.small", { href: "#/tickets?status=done" }, "See all")),
+      h("p.muted.small.card-sub", "Developers marked these done. Open each one, check the work, then verify it or send it back."),
+      ticketTable(verifyItems.slice(0, 10))),
+
+    overdue && overdueSection(overdue.items.filter(inOwned), isAdmin),
+
     unassigned && h("section.card.flush",
       h("div.card-head", h("h2", "Needs an assignee"), h("a.small", { href: "#/tickets?assignee=none" }, "See all")),
       ticketTable(unassigned.items.filter((t) => ownedIds.has(t.project.id)).slice(0, 8))),
@@ -72,4 +87,41 @@ export async function renderDashboard(main) {
         stat(overview.completed_last_7_days, "Completed (7d)")),
       statusBar(overview.by_status)),
   );
+}
+
+/** Overdue tickets with a per-person filter (chips show each assignee's overdue count). */
+function overdueSection(items, isAdmin) {
+  const people = new Map();
+  for (const t of items) {
+    const key = t.assignee ? String(t.assignee.id) : "none";
+    const entry = people.get(key) || { user: t.assignee, count: 0 };
+    entry.count += 1;
+    people.set(key, entry);
+  }
+  const ranked = [...people.entries()].sort((a, b) => b[1].count - a[1].count);
+  let selected = "";
+  const chips = h("div.chips.person-chips", { role: "group", "aria-label": "Filter overdue tickets by person" });
+  const table = h("div");
+  const link = h("a.small", "Open in Tickets");
+
+  function draw() {
+    clear(chips,
+      h("button.chip", { type: "button", "aria-pressed": String(selected === ""), onclick: () => { selected = ""; draw(); } }, `Everyone · ${items.length}`),
+      ranked.map(([key, { user, count }]) => h("button.chip.person", {
+        type: "button", "aria-pressed": String(selected === key), onclick: () => { selected = key; draw(); },
+      }, avatar(user, "sm"), user ? user.name : "Unassigned", h("strong", String(count)))));
+    const shown = selected === "" ? items : items.filter((t) => (t.assignee ? String(t.assignee.id) : "none") === selected);
+    clear(table, ticketTable(shown.slice(0, 25)));
+    link.href = `#/tickets?overdue=1${selected ? `&assignee=${selected}` : ""}`;
+  }
+
+  if (!items.length) {
+    return h("section.card", h("div.card-head", h("h2", "Overdue tickets")), h("p.muted", "Nothing is overdue. 🎉"));
+  }
+  draw();
+  return h("section.card.flush",
+    h("div.card-head", h("h2", "Overdue tickets ", h("span.badge.danger", String(items.length))), link),
+    h("div.card-sub", isAdmin ? "Across every project. Pick a person to see only their overdue work." : "In the projects you own. Pick a person to filter."),
+    h("div.chip-row", chips),
+    table);
 }

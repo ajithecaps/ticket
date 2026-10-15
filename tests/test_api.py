@@ -568,3 +568,49 @@ def test_huge_ids_are_not_found(client, admin, world):
         assert method(f"{API}{path}", headers=h, **kwargs).status_code == 404, path
     assert client.get(f"{API}/users/{big}", headers=admin).status_code == 404
     assert client.get(f"{API}/tickets", headers=h, params={"assignee_id": big}).status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# Owner verification after the developer marks a ticket done
+# --------------------------------------------------------------------------- #
+def test_owner_verifies_done_tickets(client, admin, world):
+    ravi, ops = world["ravi"], world["ops"]
+    dev = make_user(client, admin, "Vera Dev", "vera@example.com")
+    r = client.post(f"{API}/projects/{ops['id']}/members", headers=ravi["headers"], json={"user_id": dev["id"]})
+    assert r.status_code == 201, r.text
+
+    t = raise_ticket(client, ravi["headers"], ops["id"], title="Needs a check", assignee_id=dev["id"],
+                     due_date=iso(days=-1))
+    set_status(client, dev["headers"], t["id"], "in_progress")
+
+    # only a ticket in "done" can be verified, and only by an owner
+    set_status(client, ravi["headers"], t["id"], "verified", expect=400)
+    done = set_status(client, dev["headers"], t["id"], "done")
+    assert done["can_verify"] is False and done["is_overdue"] is False
+    set_status(client, dev["headers"], t["id"], "verified", expect=403)
+    owner_view = client.get(f"{API}/tickets/{t['id']}", headers=ravi["headers"]).json()
+    assert owner_view["can_verify"] is True
+    n = client.get(f"{API}/notifications", headers=ravi["headers"]).json()["items"]
+    assert "ready for verification" in n[0]["message"]
+
+    # sending it back counts as a reopen; doing it again and verifying keeps the developer's completion time
+    back = set_status(client, ravi["headers"], t["id"], "in_progress")
+    assert back["reopen_count"] == 1 and back["completed_at"] is None
+    done = set_status(client, dev["headers"], t["id"], "done")
+    verified = set_status(client, ravi["headers"], t["id"], "verified")
+    assert verified["status"] == "verified" and verified["completed_at"] == done["completed_at"]
+    assert verified["reopen_count"] == 1 and verified["can_verify"] is False
+
+    # a verified ticket is closed: developers cannot move it, it is not open or overdue, and cannot be reassigned
+    set_status(client, dev["headers"], t["id"], "in_progress", expect=403)
+    assign(client, ravi["headers"], t["id"], world["kiran"]["id"], expect=400)
+    mine = client.get(f"{API}/tickets/my/summary", headers=dev["headers"]).json()
+    assert mine["open"] == 0 and mine["overdue"] == 0 and mine["by_status"]["verified"] == 1
+    overdue = client.get(f"{API}/tickets", headers=ravi["headers"], params={"overdue": True}).json()["items"]
+    assert t["id"] not in [x["id"] for x in overdue]
+    report = client.get(f"{API}/reports/efficiency/{dev['id']}", headers=admin).json()
+    assert report["completed"] == 1 and report["open"] == 0
+
+    # an owner can still reopen it
+    reopened = set_status(client, ravi["headers"], t["id"], "in_progress")
+    assert reopened["reopen_count"] == 2 and reopened["completed_at"] is None

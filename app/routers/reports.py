@@ -5,7 +5,7 @@ from sqlalchemy import case, func, select
 
 from ..deps import AdminUser, DbSession
 from ..efficiency import build_detail, build_report
-from ..models import Project, Ticket, TicketPriority, TicketStatus, User
+from ..models import CLOSED_STATUSES, Project, Ticket, TicketPriority, TicketStatus, User
 from ..schemas import (
     DeveloperEfficiencyDetail,
     EfficiencyReport,
@@ -33,7 +33,7 @@ def overview(
     now = utcnow()
     week_ago = now - timedelta(days=7)
     scope = [Ticket.project_id == project_id] if project_id is not None else []
-    not_done = Ticket.status != TicketStatus.DONE
+    not_done = Ticket.status.not_in(CLOSED_STATUSES)
     overdue = (Ticket.due_date.is_not(None)) & (Ticket.due_date < now) & not_done
 
     def count(*conditions) -> int:
@@ -61,7 +61,7 @@ def overview(
 
     return OverviewReport(
         total_tickets=sum(by_status.values()),
-        open_tickets=sum(v for k, v in by_status.items() if k != TicketStatus.DONE.value),
+        open_tickets=sum(v for k, v in by_status.items() if k not in {s.value for s in CLOSED_STATUSES}),
         overdue_open=count(overdue),
         unassigned_open=count(Ticket.assignee_id.is_(None), not_done),
         created_last_7_days=count(Ticket.created_at >= week_ago),

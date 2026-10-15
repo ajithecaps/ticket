@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 
 from ..deps import AdminUser, CurrentUser, DbSession
 from ..models import (
+    CLOSED_STATUSES,
     NotificationType,
     Project,
     ProjectMember,
@@ -52,7 +53,7 @@ def _serialize(db, projects: list[Project], user: User) -> list[ProjectOut]:
             select(
                 Ticket.project_id,
                 func.count(),
-                func.coalesce(func.sum(case((Ticket.status != TicketStatus.DONE, 1), else_=0)), 0),
+                func.coalesce(func.sum(case((Ticket.status.not_in(CLOSED_STATUSES), 1), else_=0)), 0),
             )
             .where(Ticket.project_id.in_(ids))
             .group_by(Ticket.project_id)
@@ -262,7 +263,7 @@ def remove_member(project_id: int, user_id: int, user: CurrentUser, db: DbSessio
         select(Ticket).where(
             Ticket.project_id == project_id,
             Ticket.assignee_id == user_id,
-            Ticket.status != TicketStatus.DONE,
+            Ticket.status.not_in(CLOSED_STATUSES),
         )
     ).unique().all()
     for ticket in open_tickets:

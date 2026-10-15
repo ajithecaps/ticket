@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .models import (
+    CLOSED_STATUSES,
     Activity,
     Notification,
     NotificationType,
@@ -95,13 +96,14 @@ def apply_status_change(ticket: Ticket, new_status: TicketStatus) -> None:
     """Move a ticket to `new_status` and maintain the timestamps the efficiency report relies on."""
     now = utcnow()
     old_status = ticket.status
-    if old_status == TicketStatus.DONE and new_status != TicketStatus.DONE:
+    was_closed = old_status in CLOSED_STATUSES
+    if was_closed and new_status not in CLOSED_STATUSES:
         ticket.reopen_count += 1
         ticket.completed_at = None
     if new_status == TicketStatus.IN_PROGRESS and ticket.started_at is None:
         ticket.started_at = now
-    if new_status == TicketStatus.DONE:
-        ticket.completed_at = now
+    if new_status == TicketStatus.DONE and not was_closed:
+        ticket.completed_at = now  # verifying later keeps the developer's completion time
     ticket.status = new_status
 
 
@@ -110,7 +112,7 @@ def reset_for_new_assignee(ticket: Ticket, assignee_id: int | None) -> None:
     ticket.assignee_id = assignee_id
     ticket.assigned_at = utcnow() if assignee_id else None
     ticket.started_at = None
-    if ticket.status != TicketStatus.DONE:
+    if ticket.status not in CLOSED_STATUSES:
         ticket.status = TicketStatus.TODO
 
 

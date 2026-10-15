@@ -23,6 +23,7 @@
   --st-blocked: #f04438;
   --st-in_review: #9e77ed;
   --st-done: #12b76a;
+  --st-verified: #0e7490;
 
   --pr-low: #98a2b3;
   --pr-medium: #2e90fa;
@@ -122,6 +123,8 @@ input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px;
 .btn.primary:hover { filter: brightness(1.08); }
 .btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
 .btn.ghost { background: transparent; border-color: transparent; }
+.btn.success { background: var(--ok); border-color: var(--ok); color: #fff; }
+.btn.success:hover { filter: brightness(1.08); background: var(--ok); }
 .btn.ghost:hover { background: var(--surface-2); }
 .btn.ghost.danger { color: var(--danger); background: transparent; }
 .btn.ghost.danger:hover { background: var(--danger-soft); }
@@ -164,6 +167,8 @@ label.inline { display: inline-flex; align-items: center; gap: 6px; color: var(-
 .status-blocked { --dot: var(--st-blocked); }
 .status-in_review { --dot: var(--st-in_review); }
 .status-done { --dot: var(--st-done); }
+.status-verified { --dot: var(--st-verified); }
+.badge.status-verified { background: color-mix(in srgb, var(--st-verified) 14%, transparent); color: var(--text); }
 
 .prio { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); white-space: nowrap; }
 .prio i { width: 8px; height: 8px; border-radius: 2px; background: var(--pc); }
@@ -406,7 +411,7 @@ th.sortable:hover { color: var(--text); }
 .tab-body { display: flex; flex-direction: column; gap: 16px; }
 
 .board-filters { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-.board { display: grid; grid-template-columns: repeat(5, minmax(190px, 1fr)); gap: 12px; overflow-x: auto; padding-bottom: 8px; align-items: start; }
+.board { display: grid; grid-template-columns: repeat(6, minmax(180px, 1fr)); gap: 12px; overflow-x: auto; padding-bottom: 8px; align-items: start; }
 .column {
   background: var(--surface-2); border-radius: var(--radius); padding: 10px; min-height: 200px;
   border: 2px solid transparent; transition: border-color .12s;
@@ -476,7 +481,7 @@ th.sortable:hover { color: var(--text); }
 .comment:first-child { padding-top: 0; }
 .comment-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .comment-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.comment-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.comment-body { overflow-wrap: anywhere; }
 .mention { background: var(--accent-soft); color: var(--accent-text); border-radius: 4px; padding: 0 3px; font-weight: 500; }
 .composer-wrap { display: flex; gap: 12px; padding-top: 16px; }
 .composer { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
@@ -534,6 +539,7 @@ th.sortable:hover { color: var(--text); }
 .modal header { display: flex; justify-content: space-between; align-items: center; padding: 16px 18px 0; }
 .modal header h2 { margin: 0; font-size: 17px; }
 .modal-body { padding: 16px 18px 18px; }
+.modal-body > input { width: 100%; margin-top: 8px; }
 @keyframes fade { from { opacity: 0; } }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
 
@@ -579,9 +585,70 @@ th.sortable:hover { color: var(--text); }
   .grid-2.tight, .grid-3.tight { grid-template-columns: 1fr; }
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stat-value { font-size: 22px; }
-  .board { grid-template-columns: repeat(5, 78vw); scroll-snap-type: x mandatory; }
+  .board { grid-template-columns: repeat(6, 78vw); scroll-snap-type: x mandatory; }
   .column { scroll-snap-align: start; }
   .title-cell { min-width: 160px; }
   .ticket-head-actions { width: 100%; }
   .dev-score { margin-left: 0; align-items: flex-start; }
 }
+
+/* ------------------------------------------------------------------ verification */
+.banner {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 12px 14px; margin-top: 14px; border-radius: var(--radius); border: 1px solid var(--border);
+}
+.banner.pending { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
+.banner.verified { background: color-mix(in srgb, var(--st-verified) 12%, var(--surface)); border-color: color-mix(in srgb, var(--st-verified) 35%, transparent); }
+.banner-icon { font-size: 18px; }
+.card.highlight { border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); }
+.card-sub { padding: 0 18px 10px; margin-top: -6px; color: var(--muted); font-size: 13px; }
+.card:not(.flush) > .card-sub { padding: 0; }
+.chip-row { padding: 0 18px 14px; }
+.chip.person { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 4px; }
+.chip.person strong { color: var(--danger); }
+.copy-key { padding: 2px 8px; font-size: 12px; }
+
+/* ------------------------------------------------------------------ markdown editor */
+.md-editor { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); overflow: hidden; }
+.md-editor:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.md-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border-bottom: 1px solid var(--border); background: var(--surface-2); padding: 0 6px; }
+.md-tabs { display: flex; }
+.md-tabs button {
+  font: inherit; font-size: 13px; font-weight: 500; background: none; border: 0; cursor: pointer;
+  padding: 8px 10px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.md-tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+.md-toolbar { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; flex: 1; }
+.md-toolbar button {
+  font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; min-width: 28px; height: 26px; padding: 0 6px;
+  background: none; border: 0; border-radius: 5px; color: var(--muted); cursor: pointer;
+}
+.md-toolbar button:hover { background: var(--surface); color: var(--text); }
+.md-help { margin-left: auto; font-size: 11px; color: var(--muted); padding-right: 4px; }
+.md-body textarea.md-input { border: 0; border-radius: 0; box-shadow: none !important; display: block; font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 10px 12px; }
+.md-preview { padding: 10px 14px; min-height: 120px; }
+
+/* rendered markdown */
+.markdown { line-height: 1.6; overflow-wrap: anywhere; }
+.markdown.plain { white-space: pre-wrap; }
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+.markdown p, .markdown ul, .markdown ol, .markdown pre, .markdown blockquote, .markdown table { margin: 0 0 10px; }
+.markdown h1, .markdown h2, .markdown h3, .markdown h4 { margin: 16px 0 8px; line-height: 1.3; display: block; }
+.markdown h1 { font-size: 20px; } .markdown h2 { font-size: 17px; } .markdown h3 { font-size: 15px; } .markdown h4 { font-size: 14px; }
+.markdown ul, .markdown ol { padding-left: 22px; }
+.markdown li + li { margin-top: 2px; }
+.markdown ul.task-list { padding-left: 4px; }
+.markdown li.task-item { list-style: none; display: flex; gap: 8px; align-items: baseline; }
+.task-box { flex: none; width: 14px; height: 14px; border: 1.5px solid var(--muted); border-radius: 3px; display: inline-grid; place-items: center; font-size: 10px; position: relative; top: 2px; }
+.task-box.checked { background: var(--ok); border-color: var(--ok); color: #fff; }
+.markdown code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+.markdown pre { background: var(--surface-2); padding: 12px 14px; border-radius: 8px; overflow-x: auto; }
+.markdown pre code { background: none; padding: 0; }
+.markdown blockquote { border-left: 3px solid var(--border); padding: 2px 12px; color: var(--muted); }
+.markdown table { border-collapse: collapse; display: block; overflow-x: auto; }
+.markdown th, .markdown td { border: 1px solid var(--border); padding: 6px 10px; }
+.markdown th { background: var(--surface-2); }
+.markdown img { max-width: 100%; border-radius: 6px; }
+.markdown hr { border: 0; border-top: 1px solid var(--border); margin: 14px 0; }
+.comment-body.markdown, .comment-body .markdown { white-space: normal; }
