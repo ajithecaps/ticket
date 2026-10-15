@@ -7,12 +7,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from . import models  # noqa: F401  (registers tables on Base.metadata)
 from .config import settings
 from .database import Base, SessionLocal, engine
 from .models import Role, User
-from .routers import attachments, auth, comments, notifications, projects, reports, tickets, users
+from .jobs import scheduler
+from .routers import attachments, auth, comments, integrations, notifications, projects, reports, tickets, users
 from .security import hash_password
 
 logger = logging.getLogger("tickets")
@@ -42,7 +44,12 @@ def bootstrap_admin() -> None:
                 designation="Administrator",
             )
         )
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            # Another worker process created it at the same moment (uvicorn --workers N).
+            db.rollback()
+            return
 
         logger.warning(
             "Created first admin %s - change its password now.",
@@ -66,7 +73,9 @@ async def lifespan(_app: FastAPI):
     )
 
     bootstrap_admin()
+    scheduler.start()  # overdue alerts + daily Slack summary
     yield
+    scheduler.stop()
 
 
 app = FastAPI(
@@ -88,7 +97,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for module in (auth, users, projects, tickets, comments, attachments, notifications, reports):
+for module in (auth, users, projects, tickets, comments, attachments, notifications, reports, integrations):
     app.include_router(module.router, prefix=settings.API_PREFIX)
 
 

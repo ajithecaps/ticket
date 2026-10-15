@@ -614,3 +614,99 @@ def test_owner_verifies_done_tickets(client, admin, world):
     # an owner can still reopen it
     reopened = set_status(client, ravi["headers"], t["id"], "in_progress")
     assert reopened["reopen_count"] == 2 and reopened["completed_at"] is None
+
+
+# --------------------------------------------------------------------------- #
+# Slack: mirrored notifications, overdue alerts, daily summary
+# --------------------------------------------------------------------------- #
+def test_slack_notifications_overdue_and_summary(client, admin, world, monkeypatch):
+    import json as _json
+
+    from app import slack
+
+    sent = []
+
+    def fake_request(url, *, data, headers):
+        sent.append(_json.loads(data)["text"])
+        return 200, "ok", {}
+
+    monkeypatch.setattr(settings, "SLACK_WEBHOOK_URL", "https://hooks.slack.test/T000/B000/x")
+    monkeypatch.setattr(settings, "APP_BASE_URL", "https://tickets.example.com")
+    monkeypatch.setattr(slack, "_request", fake_request)
+
+    ravi, kiran, ops = world["ravi"], world["kiran"], world["ops"]
+    r = client.get(f"{API}/integrations/slack", headers=admin).json()
+    assert r["enabled"] is True and r["mode"] == "webhook"
+    assert client.get(f"{API}/integrations/slack", headers=kiran["headers"]).status_code == 403
+
+    # an in-app notification is mirrored once, with a link to the ticket
+    t = raise_ticket(client, ravi["headers"], ops["id"], title="Slack <check> & co", assignee_id=kiran["id"],
+                     due_date=iso(hours=-2))
+    slack.flush()
+    assert len(sent) == 1
+    assert "assigned you" in sent[0] and f"https://tickets.example.com/#/tickets/{t['key']}" in sent[0]
+    assert "&lt;check&gt; &amp; co" in sent[0] and "*Kiran Dev*" in sent[0]
+
+    # a comment that @mentions someone is one Slack message, not two
+    sent.clear()
+    r = client.post(f"{API}/tickets/{t['id']}/comments", headers=kiran["headers"],
+                    json={"body": "Done soon @ravi@example.com"})
+    assert r.status_code == 201
+    slack.flush()
+    assert len(sent) == 1 and "mentioned you" in sent[0]
+
+    # a request that fails sends nothing
+    sent.clear()
+    set_status(client, world["asha"]["headers"], t["id"], "in_progress", expect=404)
+    slack.flush()
+    assert sent == []
+
+    # overdue: alert once per due date (in-app for assignee + owners, one combined Slack message)
+    r = client.post(f"{API}/integrations/overdue-check", headers=admin).json()
+    assert t["key"] in r["alerted"]
+    assert len(sent) == 1 and "now overdue" in sent[0] and t["key"] in sent[0]
+    n = client.get(f"{API}/notifications", headers=kiran["headers"]).json()["items"]
+    assert n[0]["type"] == "overdue" and n[0]["ticket_key"] == t["key"]
+    sent.clear()
+    assert client.post(f"{API}/integrations/overdue-check", headers=admin).json()["alerted"] == []
+    assert sent == []
+    # moving the due date and missing it again alerts again
+    client.patch(f"{API}/tickets/{t['id']}", headers=ravi["headers"], json={"due_date": iso(minutes=-1)})
+    sent.clear()
+    assert t["key"] in client.post(f"{API}/integrations/overdue-check", headers=admin).json()["alerted"]
+
+    # daily summary lists every team member with their pending counts
+    sent.clear()
+    r = client.post(f"{API}/integrations/slack/daily-summary", headers=admin).json()
+    assert r["sent"] is True and len(sent) == 1
+    text = sent[0]
+    assert "Pending tickets" in text and "*Kiran Dev*" in text and "overdue" in text
+    kiran_line = next(line for line in text.splitlines() if "*Kiran Dev*" in line)
+    assert "pending" in kiran_line and ":warning:" in kiran_line
+
+    # turning a type off stops it being mirrored
+    monkeypatch.setattr(settings, "SLACK_NOTIFY_TYPES", "assigned")
+    sent.clear()
+    client.post(f"{API}/tickets/{t['id']}/comments", headers=kiran["headers"], json={"body": "no slack for this"})
+    slack.flush()
+    assert sent == []
+
+
+def test_daily_summary_schedule(monkeypatch):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from app.jobs import Scheduler
+
+    monkeypatch.setattr(settings, "SLACK_WEBHOOK_URL", "https://hooks.slack.test/x")
+    monkeypatch.setattr(settings, "SLACK_DAILY_SUMMARY_TIME", "10:00")
+    monkeypatch.setattr(settings, "SLACK_DAILY_SUMMARY_DAYS", "mon,tue,wed,thu,fri")
+    s = Scheduler()
+    ist = ZoneInfo("Asia/Kolkata")
+    wed = lambda h, m: datetime(2026, 10, 14, h, m, tzinfo=ist)  # noqa: E731 - a Wednesday
+    assert not s.summary_due(wed(9, 59), {})
+    assert s.summary_due(wed(10, 0), {})
+    assert s.summary_due(wed(11, 30), {})            # late after a restart, still inside the grace period
+    assert not s.summary_due(wed(12, 30), {})        # too late - skip today
+    assert not s.summary_due(wed(10, 5), {"summary_sent_on": "2026-10-14"})
+    assert not s.summary_due(datetime(2026, 10, 17, 10, 0, tzinfo=ist), {})  # Saturday not configured

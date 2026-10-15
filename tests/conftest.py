@@ -11,6 +11,9 @@ os.environ["MAX_UPLOAD_MB"] = "1"
 os.environ["SECRET_KEY"] = "test-secret-key-test-secret-key-0123456789"
 os.environ["FIRST_ADMIN_EMAIL"] = "admin@example.com"
 os.environ["FIRST_ADMIN_PASSWORD"] = "AdminPass123!"
+os.environ["SCHEDULER_ENABLED"] = "false"  # jobs are triggered explicitly in tests
+os.environ["SLACK_WEBHOOK_URL"] = ""
+os.environ["SLACK_BOT_TOKEN"] = ""
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 

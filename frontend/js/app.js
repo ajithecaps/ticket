@@ -7,6 +7,7 @@ import { renderTicket } from "./views/ticket.js";
 import { renderNotifications, notificationBell } from "./views/notifications.js";
 import { renderUsers } from "./views/users.js";
 import { renderReports, renderDeveloperReport } from "./views/reports.js";
+import { renderIntegrations } from "./views/integrations.js";
 
 const root = document.getElementById("app");
 const isAdmin = () => auth.user?.role === "admin";
@@ -22,6 +23,7 @@ const routes = [
   [/^\/users$/, renderUsers, true],
   [/^\/reports$/, renderReports, true],
   [/^\/reports\/(\d+)$/, (el, [id]) => renderDeveloperReport(el, Number(id)), true],
+  [/^\/integrations$/, renderIntegrations, true],
 ];
 
 let cleanup = null;
@@ -99,6 +101,7 @@ function renderShell() {
   if (isAdmin()) {
     items.push(["/users", "People", "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8m13 10v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"]);
     items.push(["/reports", "Reports", "M3 3v18h18M7 15l4-4 3 3 5-6"]);
+    items.push(["/integrations", "Slack", "M14.5 10a1.5 1.5 0 1 1 0-3h5a1.5 1.5 0 0 1 0 3zM10 9.5a1.5 1.5 0 1 1-3 0v-5a1.5 1.5 0 0 1 3 0zM9.5 14a1.5 1.5 0 1 1 0 3h-5a1.5 1.5 0 0 1 0-3zM14 14.5a1.5 1.5 0 1 1 3 0v5a1.5 1.5 0 0 1-3 0z"]);
   }
   const icon = (d) => {
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");

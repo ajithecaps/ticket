@@ -197,6 +197,8 @@ app/
   security.py      bcrypt + JWT                deps.py       auth dependencies
   permissions.py   role and membership rules   services.py   shared business logic
   efficiency.py    the metric calculations
+  slack.py         Slack client + mirroring notifications after commit
+  jobs.py          overdue alerts, daily summary, scheduler thread
   routers/         auth, users, projects, tickets, comments, attachments, notifications, reports
 frontend/          single-page web UI (plain HTML/CSS/JS modules, no build step), served at /
 tests/             14 end-to-end tests against the real API
@@ -225,6 +227,36 @@ committed so the app works offline.
 
 The JWT is kept in `localStorage`. The UI hides actions the API would refuse, but the API remains
 the source of truth for every permission.
+
+## Slack
+
+Every in-app notification is also posted to one Slack channel (after the change is saved, from a
+background thread, so Slack never slows the API). On top of that:
+
+- **Overdue alerts** - every `OVERDUE_CHECK_MINUTES` (15) the app finds open tickets past their due
+  date, notifies the assignee and project owners in-app, and posts one combined Slack message. Each
+  ticket is alerted once per due date (recorded as an `overdue_alert` in its history); changing the due
+  date and missing it again alerts again.
+- **Daily summary** - at `SLACK_DAILY_SUMMARY_TIME` (10:00) in `TIMEZONE` (Asia/Kolkata) on
+  `SLACK_DAILY_SUMMARY_DAYS`, a message lists every team member's pending tickets (to do / in progress /
+  blocked / in review), their overdue count, and team totals including tickets waiting for verification.
+  If the server was down at 10:00 it is still sent when it comes back within two hours, never twice a day.
+
+**Connect a channel**
+
+1. Create a Slack app at <https://api.slack.com/apps> → *From scratch*.
+2. Either
+   - **Incoming Webhooks** → on → *Add New Webhook* → pick the channel → put the URL in
+     `SLACK_WEBHOOK_URL`, or
+   - **OAuth & Permissions** → bot scopes `chat:write` and `users:read.email` → install → put the
+     `xoxb-…` token in `SLACK_BOT_TOKEN` and the channel ID in `SLACK_CHANNEL`, then `/invite` the app
+     into the channel. With a bot, people whose Slack e-mail matches their ticket-system e-mail are
+     real @mentions; with a webhook they appear as bold names.
+3. Set `APP_BASE_URL` to the address people open the app at, restart, and use **Slack** in the admin
+   menu to send a test message, preview or send the summary, or run the overdue check.
+
+All settings are in `.env.example`. The jobs run in one process per host (a file lock in `UPLOAD_DIR`
+picks it); if you run the API on several hosts, set `SCHEDULER_ENABLED=false` on all but one.
 
 ## Notes before production
 

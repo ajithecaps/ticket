@@ -9,6 +9,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from .config import settings
+from .slack import queue_notification as slack_queue_notification
 from .models import (
     CLOSED_STATUSES,
     Activity,
@@ -61,14 +62,22 @@ def notify(
     type: NotificationType,
     message: str,
     ticket: Ticket | None = None,
+    slack: bool = True,
 ) -> None:
-    """Create one notification per recipient (never for the actor, never twice, only active users)."""
+    """Create one notification per recipient (never for the actor, never twice, only active users).
+
+    The same event is also posted once to the Slack channel (after the transaction commits) unless
+    `slack=False` - the overdue job sends its own combined message instead.
+    """
     ids = {r for r in recipients if r is not None}
     if actor is not None:
         ids.discard(actor.id)
     if not ids:
         return
-    active_ids = set(db.scalars(select(User.id).where(User.id.in_(ids), User.is_active.is_(True))))
+    users = list(db.scalars(select(User).where(User.id.in_(ids), User.is_active.is_(True))).unique())
+    active_ids = {u.id for u in users}
+    if slack and users:
+        slack_queue_notification(db, type=type, message=message, ticket=ticket, recipients=sorted(users, key=lambda u: u.name))
     for uid in active_ids:
         db.add(
             Notification(

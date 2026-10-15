@@ -8,3 +8,5 @@ python-multipart>=0.0.9
 PyJWT>=2.8
 bcrypt>=4.1
 psycopg2-binary>=2.9
+# IANA time zones on systems without them (e.g. slim Docker images)
+tzdata>=2024.1

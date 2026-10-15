@@ -23,6 +23,26 @@ class Settings(BaseSettings):
 
     CORS_ORIGINS: str = "*"
 
+    # Public address of the web app, used for ticket links in Slack messages.
+    APP_BASE_URL: str = "http://localhost:8000"
+    # Local time zone for the daily summary schedule and dates shown in Slack.
+    TIMEZONE: str = "Asia/Kolkata"
+
+    # Background jobs (overdue checks, daily Slack summary). One process per host runs them.
+    SCHEDULER_ENABLED: bool = True
+    OVERDUE_CHECK_MINUTES: int = 15
+
+    # Slack: set SLACK_WEBHOOK_URL (simplest), or SLACK_BOT_TOKEN + SLACK_CHANNEL (enables @mentions).
+    SLACK_WEBHOOK_URL: str = ""
+    SLACK_BOT_TOKEN: str = ""
+    SLACK_CHANNEL: str = ""
+    # Which in-app notification types are mirrored to Slack: "all", "none", or a comma list
+    # (ticket_created,assigned,unassigned,status_changed,ticket_updated,comment,mention,project_member).
+    SLACK_NOTIFY_TYPES: str = "all"
+    # "HH:MM" in TIMEZONE; empty disables the daily summary.
+    SLACK_DAILY_SUMMARY_TIME: str = "10:00"
+    SLACK_DAILY_SUMMARY_DAYS: str = "mon,tue,wed,thu,fri,sat,sun"
+
     FIRST_ADMIN_NAME: str = "Administrator"
     FIRST_ADMIN_EMAIL: str = "admin@example.com"
     FIRST_ADMIN_PASSWORD: str = "ChangeMe123!"
@@ -34,6 +54,20 @@ class Settings(BaseSettings):
     @property
     def blocked_extensions(self) -> set[str]:
         return {e.strip().lower() for e in self.BLOCKED_EXTENSIONS.split(",") if e.strip()}
+
+    @property
+    def slack_enabled(self) -> bool:
+        return bool(self.SLACK_WEBHOOK_URL or (self.SLACK_BOT_TOKEN and self.SLACK_CHANNEL))
+
+    @property
+    def slack_notify_types(self) -> set[str] | None:
+        """None means every type."""
+        raw = self.SLACK_NOTIFY_TYPES.strip().lower()
+        if raw in ("", "all", "*"):
+            return None
+        if raw == "none":
+            return set()
+        return {t.strip() for t in raw.split(",") if t.strip()}
 
     @property
     def cors_origins_list(self) -> list[str]:

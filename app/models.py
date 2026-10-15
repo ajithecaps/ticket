@@ -70,6 +70,7 @@ class NotificationType(str, enum.Enum):
     COMMENT = "comment"
     MENTION = "mention"
     PROJECT_MEMBER = "project_member"
+    OVERDUE = "overdue"
 
 
 PRIORITY_RANK = {
