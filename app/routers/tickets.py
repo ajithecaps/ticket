@@ -20,6 +20,7 @@ from ..models import (
     TicketPriority,
     TicketStatus,
     TicketType,
+    User,
     Worklog,
 )
 from ..permissions import (
@@ -202,6 +203,29 @@ def _label(ticket: Ticket) -> str:
     return f"{ticket.key} {ticket.title}"
 
 
+def _describe_changes(changes: list[tuple[str, object, object]]) -> str:
+    """'priority medium → high, due date 20 Oct 2026, description edited'."""
+    def fmt(field, v):
+        if v is None or v == "":
+            return "none"
+        if field == "due_date":
+            return f"{v:%d %b %Y}"
+        if field == "estimated_hours":
+            return f"{v:g}h"
+        return str(getattr(v, "value", v))
+
+    parts = []
+    for field, old, new in changes:
+        name = field.replace("_", " ").replace("estimated hours", "estimate")
+        if field == "description":
+            parts.append("description edited")
+        elif field == "title":
+            parts.append(f"title was \"{old}\"")
+        else:
+            parts.append(f"{name} {fmt(field, old)} → {fmt(field, new)}")
+    return ", ".join(parts)
+
+
 # --------------------------------------------------------------------------- #
 # Lists  (static paths first so they are not captured by /tickets/{ticket_id})
 # --------------------------------------------------------------------------- #
@@ -355,17 +379,22 @@ def create_ticket(project_id: int, payload: TicketCreate, user: CurrentUser, db:
     db.flush()
     log_activity(db, ticket, user, "created")
 
+    # In-app: the assignee hears they were assigned; every project owner hears a ticket was created.
+    # Slack: one "created" message covering both (the assigned one is not posted separately).
     if payload.assignee_id:
         log_activity(db, ticket, user, "assigned", "assignee", None, payload.assignee_id)
         notify(
             db, [payload.assignee_id], actor=user, type=NotificationType.ASSIGNED,
-            message=f"{user.name} assigned you {_label(ticket)}", ticket=ticket,
+            message=f"{user.name} assigned you {_label(ticket)}", ticket=ticket, slack=False,
         )
-    if not owner:
-        notify(
-            db, project_owner_ids(db, project_id), actor=user, type=NotificationType.TICKET_CREATED,
-            message=f"{user.name} raised {_label(ticket)}", ticket=ticket,
-        )
+    assignee_name = db.get(User, payload.assignee_id).name if payload.assignee_id else "unassigned"
+    details = [ticket.type.value, f"{ticket.priority.value} priority", f"assignee: {assignee_name}"]
+    if ticket.due_date:
+        details.append(f"due {ticket.due_date:%d %b %Y}")
+    notify(
+        db, [*project_owner_ids(db, project_id), payload.assignee_id], actor=user, type=NotificationType.TICKET_CREATED,
+        message=f"{user.name} created {_label(ticket)} ({', '.join(details)})", ticket=ticket,
+    )
     db.commit()
     db.refresh(ticket)
     return _detail(db, user, ticket)
@@ -410,18 +439,23 @@ def update_ticket(ticket_id: int, payload: TicketUpdate, user: CurrentUser, db: 
         data["due_date"] = ensure_utc(data["due_date"])
 
     changed: list[str] = []
+    changes: list[tuple[str, object, object]] = []
     for field, value in data.items():
         old = getattr(ticket, field)
         if old != value:
             log_activity(db, ticket, user, "updated", field, old, value)
             setattr(ticket, field, value)
             changed.append(field)
+            changes.append((field, old, value))
 
-    if {"priority", "due_date"} & set(changed):
+    if changed:
+        # Assignee and reporter always; owners too when someone else (developer/reporter) made the edit.
+        recipients = [ticket.assignee_id, ticket.reporter_id]
+        if not perms["owner"]:
+            recipients += project_owner_ids(db, ticket.project_id)
         notify(
-            db, [ticket.assignee_id, ticket.reporter_id], actor=user, type=NotificationType.TICKET_UPDATED,
-            message=f"{user.name} updated {', '.join(f for f in changed if f in ('priority', 'due_date'))} on {_label(ticket)}",
-            ticket=ticket,
+            db, recipients, actor=user, type=NotificationType.TICKET_UPDATED,
+            message=f"{user.name} updated {_label(ticket)}: {_describe_changes(changes)}", ticket=ticket,
         )
     db.commit()
     db.refresh(ticket)

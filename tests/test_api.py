@@ -643,8 +643,9 @@ def test_slack_notifications_overdue_and_summary(client, admin, world, monkeypat
     t = raise_ticket(client, ravi["headers"], ops["id"], title="Slack <check> & co", assignee_id=kiran["id"],
                      due_date=iso(hours=-2))
     slack.flush()
-    assert len(sent) == 1
-    assert "assigned you" in sent[0] and f"https://tickets.example.com/#/tickets/{t['key']}" in sent[0]
+    assert len(sent) == 1  # one "created" message, not a second one for the assignment
+    assert "Ravi Owner created" in sent[0] and "assignee: Kiran Dev" in sent[0]
+    assert f"https://tickets.example.com/#/tickets/{t['key']}" in sent[0]
     assert "&lt;check&gt; &amp; co" in sent[0] and "*Kiran Dev*" in sent[0]
 
     # a comment that @mentions someone is one Slack message, not two
@@ -710,3 +711,58 @@ def test_daily_summary_schedule(monkeypatch):
     assert not s.summary_due(wed(12, 30), {})        # too late - skip today
     assert not s.summary_due(wed(10, 5), {"summary_sent_on": "2026-10-14"})
     assert not s.summary_due(datetime(2026, 10, 17, 10, 0, tzinfo=ist), {})  # Saturday not configured
+
+
+def test_create_and_update_always_notify(client, admin, world, monkeypatch):
+    import json as _json
+
+    from app import slack
+
+    sent = []
+    monkeypatch.setattr(settings, "SLACK_WEBHOOK_URL", "https://hooks.slack.test/x")
+    monkeypatch.setattr(slack, "_request", lambda url, *, data, headers: (sent.append(_json.loads(data)["text"]), (200, "ok", {}))[1])
+
+    ravi, asha, kiran, pay = world["ravi"], world["asha"], world["kiran"], world["pay"]
+
+    def latest(user):
+        return client.get(f"{API}/notifications", headers=user["headers"]).json()["items"][0]
+
+    # an owner creating an unassigned ticket: nobody else to notify in-app, but Slack still hears about it
+    t = raise_ticket(client, ravi["headers"], pay["id"], title="Owner-made ticket")
+    slack.flush()
+    assert len(sent) == 1 and "created" in sent[0] and "assignee: unassigned" in sent[0]
+
+    # a developer raising one: owners get "ticket_created"
+    sent.clear()
+    t2 = raise_ticket(client, asha["headers"], pay["id"], title="Dev-made ticket", priority="high")
+    n = latest(ravi)
+    assert n["type"] == "ticket_created" and "Asha Dev created" in n["message"] and "high priority" in n["message"]
+    slack.flush()
+    assert len(sent) == 1
+
+    # any field update notifies assignee + reporter, with what changed
+    assign(client, ravi["headers"], t2["id"], kiran["id"])
+    sent.clear()
+    r = client.patch(f"{API}/tickets/{t2['id']}", headers=ravi["headers"],
+                     json={"description": "More detail", "estimated_hours": 4, "priority": "critical"})
+    assert r.status_code == 200
+    for who in (kiran, asha):
+        n = latest(who)
+        assert n["type"] == "ticket_updated"
+        assert "description edited" in n["message"] and "priority high → critical" in n["message"]
+        assert "estimate none → 4h" in n["message"]
+    slack.flush()
+    assert len(sent) == 1 and "updated" in sent[0]
+
+    # an edit by the assignee also tells the project owners
+    client.patch(f"{API}/tickets/{t2['id']}", headers=kiran["headers"], json={"title": "Dev-made ticket v2"})
+    n = latest(ravi)
+    assert n["type"] == "ticket_updated" and 'title was "Dev-made ticket"' in n["message"]
+
+    # saving without changes notifies nobody
+    sent.clear()
+    before = client.get(f"{API}/notifications", headers=kiran["headers"]).json()["total"]
+    client.patch(f"{API}/tickets/{t2['id']}", headers=ravi["headers"], json={"priority": "critical"})
+    slack.flush()
+    assert client.get(f"{API}/notifications", headers=kiran["headers"]).json()["total"] == before and sent == []
+    assert t["id"]

@@ -72,11 +72,11 @@ def notify(
     ids = {r for r in recipients if r is not None}
     if actor is not None:
         ids.discard(actor.id)
-    if not ids:
-        return
-    users = list(db.scalars(select(User).where(User.id.in_(ids), User.is_active.is_(True))).unique())
+    users = list(db.scalars(select(User).where(User.id.in_(ids), User.is_active.is_(True))).unique()) if ids else []
     active_ids = {u.id for u in users}
-    if slack and users:
+    # Ticket events always reach the Slack channel, even when nobody gets an in-app notification
+    # (e.g. an owner creating an unassigned ticket in a project they own alone).
+    if slack and (users or ticket is not None):
         slack_queue_notification(db, type=type, message=message, ticket=ticket, recipients=sorted(users, key=lambda u: u.name))
     for uid in active_ids:
         db.add(
