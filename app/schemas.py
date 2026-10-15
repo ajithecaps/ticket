@@ -10,6 +10,7 @@ from .models import (
     TicketPriority,
     TicketStatus,
     TicketType,
+    ReleaseStatus,
     UpcomingStatus,
 )
 
@@ -177,6 +178,13 @@ class StatusChange(BaseModel):
     status: TicketStatus
 
 
+class ReleaseBrief(ORMModel):
+    id: int
+    name: str
+    status: ReleaseStatus
+    released_at: datetime | None = None
+
+
 class TicketOut(ORMModel):
     id: int
     key: str
@@ -197,6 +205,7 @@ class TicketOut(ORMModel):
     started_at: datetime | None = None
     completed_at: datetime | None = None
     reopen_count: int
+    release: ReleaseBrief | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -476,3 +485,53 @@ class ConvertIn(BaseModel):
     due_date: datetime | None = None
     estimated_hours: float | None = Field(None, ge=0, le=10000)
     copy_documents: bool = True
+
+
+# --------------------------------------------------------------------------- #
+# Releases
+# --------------------------------------------------------------------------- #
+class ReleaseCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100, description='e.g. "v1.4.0"')
+    notes: str = Field("", max_length=20000)
+    planned_date: datetime | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _strip_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("name must not be blank")
+        return v
+
+
+class ReleaseUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=100)
+    notes: str | None = Field(None, max_length=20000)
+    planned_date: datetime | None = None
+
+
+class ReleaseOut(ORMModel):
+    id: int
+    project: ProjectBrief
+    name: str
+    notes: str
+    status: ReleaseStatus
+    planned_date: datetime | None = None
+    released_at: datetime | None = None
+    creator: UserBrief | None = None
+    releaser: UserBrief | None = None
+    ticket_count: int = 0
+    by_type: dict[str, int] = {}
+    unverified_count: int = 0  # tickets still "done" (verified automatically when released)
+    can_edit: bool = False  # admin / project owner: name (while planned) and notes (always)
+    can_manage: bool = False  # admin / project owner while planned: tickets, release, delete
+    created_at: datetime
+    updated_at: datetime
+
+
+class ReleaseDetail(ReleaseOut):
+    tickets: list[TicketOut] = []
+
+
+class ReleaseTicketsIn(BaseModel):
+    ticket_ids: list[int] = Field(min_length=1, max_length=200)

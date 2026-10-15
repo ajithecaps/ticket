@@ -843,3 +843,101 @@ def test_upcoming_tasks(client, admin, world, tmp_path):
     assert client.delete(f"{API}/upcoming/{task['id']}", headers=admin).status_code == 204
     assert client.get(f"{API}/upcoming/{task['id']}", headers=admin).status_code == 404
     assert client.get(f"{API}/tickets/{ticket['id']}", headers=admin).status_code == 200
+
+
+# --------------------------------------------------------------------------- #
+# Releases
+# --------------------------------------------------------------------------- #
+def test_releases(client, admin, world, monkeypatch):
+    import json as _json
+
+    from app import slack
+
+    sent = []
+    monkeypatch.setattr(settings, "SLACK_WEBHOOK_URL", "https://hooks.slack.test/x")
+    monkeypatch.setattr(slack, "_request", lambda url, *, data, headers: (sent.append(_json.loads(data)["text"]), (200, "ok", {}))[1])
+
+    ravi, asha, kiran, zed, ops = world["ravi"], world["asha"], world["kiran"], world["zed"], world["ops"]
+    H = ravi["headers"]
+
+    def finished(title, type_="feature", verify=True):
+        t = raise_ticket(client, H, ops["id"], title=title, type=type_, assignee_id=kiran["id"])
+        set_status(client, kiran["headers"], t["id"], "done")
+        if verify:
+            set_status(client, H, t["id"], "verified")
+        return t
+
+    feat, bug = finished("Export CSV"), finished("Fix totals", "bug", verify=False)
+    open_t = raise_ticket(client, H, ops["id"], title="Still open", assignee_id=kiran["id"])
+
+    # only owners/admin create; names are unique per project
+    assert client.post(f"{API}/projects/{ops['id']}/releases", headers=kiran["headers"], json={"name": "v1.0"}).status_code == 403
+    rel = client.post(f"{API}/projects/{ops['id']}/releases", headers=H, json={"name": " v1.0 ", "notes": "First cut"}).json()
+    assert rel["name"] == "v1.0" and rel["status"] == "planned" and rel["can_manage"] is True
+    assert client.post(f"{API}/projects/{ops['id']}/releases", headers=admin, json={"name": "V1.0"}).status_code == 409
+
+    # only finished tickets of the same project can be added
+    r = client.post(f"{API}/releases/{rel['id']}/tickets", headers=H, json={"ticket_ids": [feat["id"], open_t["id"]]})
+    assert r.status_code == 400 and "not done yet" in r.json()["detail"]
+    r = client.post(f"{API}/releases/{rel['id']}/tickets", headers=H, json={"ticket_ids": [feat["id"], bug["id"]]})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ticket_count"] == 2 and body["unverified_count"] == 1 and body["by_type"] == {"feature": 1, "bug": 1}
+    assert client.post(f"{API}/releases/{rel['id']}/tickets", headers=kiran["headers"], json={"ticket_ids": [feat["id"]]}).status_code == 403
+
+    # tickets in a release leave the board / default lists (in_release=false) but can be listed by release
+    board = client.get(f"{API}/projects/{ops['id']}/tickets", headers=H, params={"in_release": False, "limit": 200}).json()["items"]
+    assert feat["id"] not in [t["id"] for t in board] and open_t["id"] in [t["id"] for t in board]
+    by_rel = client.get(f"{API}/tickets", headers=H, params={"release_id": rel["id"]}).json()["items"]
+    assert {t["id"] for t in by_rel} == {feat["id"], bug["id"]}
+    assert client.get(f"{API}/tickets/{feat['id']}", headers=H).json()["release"]["name"] == "v1.0"
+
+    # reopening a ticket in a planned release takes it out of the release
+    extra = finished("Tweak copy", "improvement")
+    client.post(f"{API}/releases/{rel['id']}/tickets", headers=H, json={"ticket_ids": [extra["id"]]})
+    reopened = set_status(client, H, extra["id"], "in_progress")
+    assert reopened["release"] is None
+    assert client.get(f"{API}/releases/{rel['id']}", headers=H).json()["ticket_count"] == 2
+
+    # members can read; outsiders cannot
+    assert client.get(f"{API}/releases/{rel['id']}", headers=kiran["headers"]).json()["can_manage"] is False
+    assert client.get(f"{API}/releases/{rel['id']}", headers=zed["headers"]).status_code == 404
+    assert [x["id"] for x in client.get(f"{API}/projects/{ops['id']}/releases", headers=kiran["headers"]).json()] == [rel["id"]]
+
+    # releasing: verifies remaining done tickets, locks the release, notifies members and Slack
+    sent.clear()
+    assert client.post(f"{API}/releases/{rel['id']}/release", headers=kiran["headers"]).status_code == 403
+    r = client.post(f"{API}/releases/{rel['id']}/release", headers=H)
+    assert r.status_code == 200, r.text
+    shipped = r.json()
+    assert shipped["status"] == "released" and shipped["released_at"] and shipped["releaser"]["id"] == ravi["id"]
+    assert shipped["unverified_count"] == 0 and shipped["can_manage"] is False
+    assert all(t["status"] == "verified" for t in shipped["tickets"])
+    n = client.get(f"{API}/notifications", headers=kiran["headers"]).json()["items"][0]
+    assert n["type"] == "release" and "v1.0 was released" in n["message"]
+    slack.flush()
+    assert len(sent) == 1 and "v1.0" in sent[0] and "*New features*" in sent[0] and "*Bug fixes*" in sent[0]
+
+    # a released version is locked
+    assert client.post(f"{API}/releases/{rel['id']}/release", headers=H).status_code == 400
+    assert client.delete(f"{API}/releases/{rel['id']}/tickets/{feat['id']}", headers=H).status_code == 400
+    assert client.delete(f"{API}/releases/{rel['id']}", headers=H).status_code == 400
+    r = set_status(client, H, feat["id"], "in_progress", expect=400)
+    assert "shipped in release v1.0" in r["detail"]
+    # notes can still be corrected, the name cannot
+    assert client.patch(f"{API}/releases/{rel['id']}", headers=H, json={"notes": "First cut (fixed)"}).status_code == 200
+    assert client.patch(f"{API}/releases/{rel['id']}", headers=H, json={"name": "v1.0.1"}).status_code == 400
+
+    # deleting a planned release puts its tickets back on the board
+    rel2 = client.post(f"{API}/projects/{ops['id']}/releases", headers=H, json={"name": "v1.1"}).json()
+    again = finished("Another feature")
+    client.post(f"{API}/releases/{rel2['id']}/tickets", headers=H, json={"ticket_ids": [again["id"]]})
+    assert client.delete(f"{API}/releases/{rel2['id']}", headers=H).status_code == 204
+    assert client.get(f"{API}/tickets/{again['id']}", headers=H).json()["release"] is None
+    # an empty release cannot be released
+    rel3 = client.post(f"{API}/projects/{ops['id']}/releases", headers=H, json={"name": "v1.2"}).json()
+    assert client.post(f"{API}/releases/{rel3['id']}/release", headers=H).status_code == 400
+
+    # released tickets still count in the efficiency report
+    rep = client.get(f"{API}/reports/efficiency/{kiran['id']}", headers=admin, params={"project_id": ops["id"]}).json()
+    assert rep["completed"] >= 3

@@ -22,6 +22,7 @@ async function open(n) {
   }
   if (n.ticket_key) navigate(`/tickets/${n.ticket_key}`);
   else if (n.type === "upcoming") navigate("/upcoming");
+  else if (n.type === "release") navigate("/releases");
 }
 
 /** Topbar bell: unread badge (polled) plus a dropdown with the latest few. */

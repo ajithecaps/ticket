@@ -7,6 +7,7 @@ import {
 import { filteredTicketList } from "./ticketlist.js";
 import { newTicketDialog } from "./ticket.js";
 import { renderProjectUpcoming } from "./upcoming.js";
+import { addToReleaseDialog, renderProjectReleases } from "./releases.js";
 
 const isAdmin = () => auth.user.role === "admin";
 
@@ -81,7 +82,7 @@ export async function renderProject(main, id, tab) {
   const [project, members] = await Promise.all([api.get(`/projects/${id}`), api.get(`/projects/${id}/members`)]);
   const owner = project.my_role === "owner" || project.my_role === "admin";
 
-  const tabs = [["board", "Board"], ["list", "List"], ["upcoming", "Upcoming"], ["members", `Members (${members.length})`]];
+  const tabs = [["board", "Board"], ["list", "List"], ["upcoming", "Upcoming"], ["releases", "Releases"], ["members", `Members (${members.length})`]];
   if (owner) tabs.push(["settings", "Settings"]);
 
   const body = h("div.tab-body");
@@ -105,6 +106,7 @@ export async function renderProject(main, id, tab) {
       assignees: members.map((m) => [String(m.user.id), m.user.name]),
     }));
   } else if (tab === "upcoming") await renderProjectUpcoming(body, project);
+  else if (tab === "releases") await renderProjectReleases(body, project);
   else if (tab === "members") renderMembers(body, project, members, owner);
   else if (tab === "settings" && owner) renderSettings(body, project);
 }
@@ -124,6 +126,7 @@ async function renderBoard(body, project, owner) {
       const pages = await Promise.all(STATUSES.map((s) => api.get(`/projects/${project.id}/tickets`, {
         status: s, sort: CLOSED.includes(s) ? "updated_at" : "priority", limit: CLOSED.includes(s) ? 30 : 200,
         assignee_id: mineOnly ? auth.user.id : undefined,
+        in_release: false, // tickets moved into a release leave the board
       })));
       tickets = pages.flatMap((p) => p.items);
       draw(pages.map((p) => p.total));
@@ -135,6 +138,10 @@ async function renderBoard(body, project, owner) {
       const items = tickets.filter((t) => t.status === s);
       const col = h(`section.column.col-${s}`, { dataset: { status: s } },
         h("header", h(`i.status-dot.status-${s}`), h("span", label(s)), h("span.muted", String(totals[i]))),
+        owner && CLOSED.includes(s) && items.length > 0 && h("button.btn.sm.col-action", {
+          title: "Move these finished tickets into a release",
+          onclick: () => addToReleaseDialog(project.id, { preselect: items.map((t) => t.id), onDone: () => load() }),
+        }, "🚀 Move to release"),
         h("div.cards", items.map(card), !items.length && h("p.muted.small.center", "No tickets"),
           totals[i] > items.length && h("a.small.center.more", { href: `#/projects/${project.id}/list?status=${s}` }, `+${totals[i] - items.length} more`)));
       col.addEventListener("dragover", (e) => { e.preventDefault(); col.classList.add("drop"); });

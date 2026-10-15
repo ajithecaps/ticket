@@ -9,6 +9,7 @@ from sqlalchemy import and_, case, func, not_, or_, select
 from ..deps import CurrentUser, DbSession
 from ..models import (
     CLOSED_STATUSES,
+    ReleaseStatus,
     PRIORITY_RANK,
     Activity,
     Comment,
@@ -81,6 +82,10 @@ class TicketFilters:
         q: Annotated[str | None, Query(min_length=1, max_length=100, description="Title/description text or a key like PAY-12")] = None,
         due_before: datetime | None = None,
         due_after: datetime | None = None,
+        release_id: Annotated[int | None, Query(description="Tickets in this release")] = None,
+        in_release: Annotated[
+            bool | None, Query(description="false: hide tickets moved into a release (the board does this)")
+        ] = None,
         sort: Literal["created_at", "updated_at", "due_date", "priority"] = "created_at",
         order: Literal["asc", "desc"] = "desc",
         limit: Annotated[int, Query(ge=1, le=200)] = 20,
@@ -96,6 +101,8 @@ class TicketFilters:
         self.q = q
         self.due_before = ensure_utc(due_before)
         self.due_after = ensure_utc(due_after)
+        self.release_id = release_id
+        self.in_release = in_release
         self.sort = sort
         self.order = order
         self.limit = limit
@@ -140,6 +147,13 @@ def _apply_filters(stmt, f: TicketFilters):
         stmt = stmt.where(overdue_cond)
     elif f.overdue is False:
         stmt = stmt.where(not_(overdue_cond))
+
+    if f.release_id is not None:
+        stmt = stmt.where(Ticket.release_id == f.release_id)
+    if f.in_release is True:
+        stmt = stmt.where(Ticket.release_id.is_not(None))
+    elif f.in_release is False:
+        stmt = stmt.where(Ticket.release_id.is_(None))
 
     if f.due_before:
         stmt = stmt.where(Ticket.due_date <= f.due_before)
@@ -520,6 +534,15 @@ def change_status(ticket_id: int, payload: StatusChange, user: CurrentUser, db: 
         raise HTTPException(
             status.HTTP_403_FORBIDDEN, "This ticket has been verified - ask a project owner to reopen it"
         )
+    if ticket.release is not None and new not in CLOSED_STATUSES:
+        if ticket.release.status == ReleaseStatus.RELEASED:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"This ticket shipped in release {ticket.release.name} - raise a new ticket for follow-up work",
+            )
+        # Reopening a ticket takes it back out of the planned release (and back onto the board).
+        log_activity(db, ticket, user, "release_removed", "release", ticket.release.name, None)
+        ticket.release_id = None
     if ticket.assignee_id is None and new in (
         TicketStatus.IN_PROGRESS, TicketStatus.IN_REVIEW, TicketStatus.DONE
     ):

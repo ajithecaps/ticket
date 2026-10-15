@@ -201,7 +201,8 @@ app/
   slack.py         Slack client + mirroring notifications after commit
   jobs.py          overdue alerts, daily summary, scheduler thread
   routers/upcoming.py  upcoming tasks (requirements before tickets)
-migrations/        Alembic environment and versions (0001 baseline, 0002 upcoming tasks)
+  routers/releases.py  releases: finished tickets shipped to production
+migrations/        Alembic environment and versions (0001 baseline, 0002 upcoming tasks, 0003 releases)
   routers/         auth, users, projects, tickets, comments, attachments, notifications, reports
 frontend/          single-page web UI (plain HTML/CSS/JS modules, no build step), served at /
 tests/             14 end-to-end tests against the real API
@@ -263,6 +264,25 @@ acceptance criteria (a checklist with a progress meter), reference links and doc
 - API: `GET /upcoming` · `GET|POST /projects/{id}/upcoming` · `GET|PATCH|DELETE /upcoming/{id}` ·
   `POST /upcoming/{id}/documents` · `GET /upcoming-documents/{id}/download` ·
   `DELETE /upcoming-documents/{id}` · `POST /upcoming/{id}/convert`
+
+## Releases
+
+Finished work is grouped per project and shipped to production together.
+
+1. An admin or project owner creates a release (e.g. `v1.4.0`, optional planned date and Markdown notes),
+   or uses **🚀 Move to release** on the board's Done / Verified columns.
+2. Only `done` / `verified` tickets of the same project can be added. **A ticket in a release leaves the
+   board and the default ticket lists** (`in_release=false`); tick *Show released* to see them again.
+   Reopening a ticket that is in a planned release takes it back out of the release.
+3. **Release to production** locks the release, records who released it and when, marks any ticket
+   still in `done` as `verified` (shipping is the owner's acceptance), and notifies the project's
+   members in-app plus one Slack message with the tickets grouped as features / improvements / bug fixes.
+4. A released ticket cannot be reopened - raise a new ticket for follow-up work. Release notes stay
+   editable; the name does not. Released tickets still count in the efficiency report.
+
+API: `GET /releases` · `GET|POST /projects/{id}/releases` · `GET|PATCH|DELETE /releases/{id}` ·
+`POST /releases/{id}/tickets` · `DELETE /releases/{id}/tickets/{ticket_id}` · `POST /releases/{id}/release`;
+ticket lists accept `release_id=` and `in_release=true|false`.
 
 ## Slack
 

@@ -73,6 +73,12 @@ class NotificationType(str, enum.Enum):
     PROJECT_MEMBER = "project_member"
     OVERDUE = "overdue"
     UPCOMING = "upcoming"
+    RELEASE = "release"
+
+
+class ReleaseStatus(str, enum.Enum):
+    PLANNED = "planned"  # collecting finished tickets
+    RELEASED = "released"  # shipped to production - locked
 
 
 class UpcomingStatus(str, enum.Enum):
@@ -208,11 +214,16 @@ class Ticket(Base):
     started_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     reopen_count: Mapped[int] = mapped_column(default=0)
+    # Finished tickets are moved into a release; they then leave the board and default lists.
+    release_id: Mapped[int | None] = mapped_column(
+        ForeignKey("releases.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
 
     project: Mapped[Project] = relationship(back_populates="tickets", lazy="joined")
+    release: Mapped["Release | None"] = relationship(back_populates="tickets", lazy="joined")
     reporter: Mapped[User] = relationship(foreign_keys=[reporter_id], lazy="joined")
     assignee: Mapped[User | None] = relationship(foreign_keys=[assignee_id], lazy="joined")
 
@@ -392,3 +403,27 @@ class UpcomingDocument(Base):
 
     task: Mapped[UpcomingTask] = relationship(back_populates="documents")
     uploader: Mapped[User] = relationship(lazy="joined", foreign_keys=[uploaded_by])
+
+
+class Release(Base):
+    """A production release of one project: finished tickets grouped under a version name."""
+
+    __tablename__ = "releases"
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_release_project_name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(100))  # e.g. "v1.4.0" or "Sprint 12"
+    notes: Mapped[str] = mapped_column(Text, default="")  # Markdown release notes
+    status: Mapped[ReleaseStatus] = enum_column(ReleaseStatus, default=ReleaseStatus.PLANNED, index=True)
+    planned_date: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    released_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    released_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+    project: Mapped[Project] = relationship(lazy="joined")
+    creator: Mapped[User | None] = relationship(lazy="joined", foreign_keys=[created_by])
+    releaser: Mapped[User | None] = relationship(lazy="joined", foreign_keys=[released_by])
+    tickets: Mapped[list[Ticket]] = relationship(back_populates="release", order_by="Ticket.number")

@@ -684,3 +684,25 @@ th.sortable:hover { color: var(--text); }
 .ref-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .ref-list li { display: flex; flex-direction: column; overflow-wrap: anywhere; }
 @media (max-width: 600px) { .ref-row { grid-template-columns: 1fr auto; } .ref-row input:first-child { grid-column: 1 / -1; } }
+
+/* ------------------------------------------------------------------ releases */
+.rel-section { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.rel-section h2 { display: flex; align-items: center; margin: 0; }
+.rel-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.rel-card { display: flex; flex-direction: column; gap: 6px; color: inherit; }
+.rel-card:hover { border-color: var(--accent); text-decoration: none; }
+.rel-name { font: 700 16px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.rel-meta { gap: 10px; margin-top: 4px; }
+.badge.rel-released { background: var(--ok-soft); color: var(--ok); }
+.badge.rel-planned { background: var(--accent-soft); color: var(--accent-text); }
+.badge.rel-chip { background: var(--surface-2); color: var(--text); text-decoration: none; }
+.badge.rel-chip:hover { background: var(--accent-soft); }
+.warn-text { color: var(--warn); }
+.rel-type h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 14px 18px 4px; }
+.col-action { width: 100%; margin-top: -2px; margin-bottom: 6px; font-size: 12px; }
+.column header { flex-wrap: wrap; }
+.pick-list { display: flex; flex-direction: column; max-height: 50vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; }
+.pick-row, .pick-all { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); white-space: normal; }
+.pick-all { background: var(--surface-2); position: sticky; top: 0; z-index: 1; }
+.pick-row:last-child { border-bottom: 0; }
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }

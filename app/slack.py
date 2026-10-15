@@ -41,6 +41,7 @@ EMOJI = {
     NotificationType.PROJECT_MEMBER: ":busts_in_silhouette:",
     NotificationType.OVERDUE: ":alarm_clock:",
     NotificationType.UPCOMING: ":clipboard:",
+    NotificationType.RELEASE: ":rocket:",
 }
 
 

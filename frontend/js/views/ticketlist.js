@@ -17,7 +17,8 @@ export function ticketTable(tickets, { showProject = true } = {}) {
         h("td.key", h("a", { href: `#/tickets/${t.key}` }, t.key)),
         h("td", h("div.title-cell", typeBadge(t.type), h("span", t.title))),
         showProject && h("td.hide-sm.muted", t.project.name),
-        h("td", statusBadge(t.status)),
+        h("td", h("div.row", statusBadge(t.status),
+          t.release && h("a.badge.rel-chip", { href: `#/releases/${t.release.id}`, title: `In release ${t.release.name}` }, `🚀 ${t.release.name}`))),
         h("td.hide-sm", priorityBadge(t.priority)),
         h("td.hide-sm", userChip(t.assignee)),
         h(`td.nowrap${t.is_overdue ? ".overdue" : ""}`, t.due_date ? fmtDate(t.due_date) : h("span.muted", "—")),
@@ -40,6 +41,7 @@ export function filteredTicketList(opts) {
     type: q0.get("type") || "",
     assignee: q0.get("assignee") || "",
     overdue: q0.get("overdue") === "1",
+    released: q0.get("released") === "1",
     sort: q0.get("sort") || "updated_at",
     offset: Number(q0.get("offset")) || 0,
   };
@@ -74,12 +76,14 @@ export function filteredTicketList(opts) {
     state.assignee, { onchange: onChange("assignee"), "aria-label": "Assignee" }),
     select("sort", [["updated_at", "Recently updated"], ["created_at", "Newest"], ["priority", "Priority"], ["due_date", "Due date"]], state.sort, { onchange: onChange("sort"), "aria-label": "Sort" }),
     h("label.check", h("input", { type: "checkbox", checked: state.overdue, onchange: onChange("overdue") }), "Overdue"),
+    h("label.check", { title: "Include tickets that were moved into a release" },
+      h("input", { type: "checkbox", checked: state.released, onchange: onChange("released") }), "Show released"),
   );
 
   async function load() {
     setQuery({
       q: state.q, status: state.status, priority: state.priority, type: state.type, assignee: state.assignee,
-      overdue: state.overdue ? "1" : "", sort: state.sort !== "updated_at" ? state.sort : "", offset: state.offset || "",
+      overdue: state.overdue ? "1" : "", released: state.released ? "1" : "", sort: state.sort !== "updated_at" ? state.sort : "", offset: state.offset || "",
     });
     const params = {
       ...opts.extraParams,
@@ -88,6 +92,7 @@ export function filteredTicketList(opts) {
       priority: state.priority || undefined,
       type: state.type || undefined,
       overdue: state.overdue || undefined,
+      in_release: state.released ? undefined : false,
       sort: state.sort,
       order: state.sort === "due_date" ? "asc" : "desc",
       limit: PAGE,

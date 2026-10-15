@@ -234,6 +234,8 @@ export async function renderTicket(main, key) {
     clear(sidebar, h("div.card.props",
       row("Assignee", [assigneeCell, meAssign]),
       row("Reporter", userChip(t.reporter)),
+      t.release && row("Release", h("a.badge.rel-chip", { href: `#/releases/${t.release.id}` },
+        t.release.status === "released" ? `🚀 ${t.release.name} · released ${fmtDate(t.release.released_at)}` : `${t.release.name} · planned`)),
       row("Type", t.can_edit ? select("type", TYPES, t.type, { "aria-label": "Type", onchange: (e) => patch({ type: e.target.value }) }) : label(t.type)),
       row("Priority", canOwner ? select("priority", PRIORITIES, t.priority, { "aria-label": "Priority", onchange: (e) => patch({ priority: e.target.value }) }) : priorityBadge(t.priority)),
       row("Due date", canOwner
@@ -550,6 +552,9 @@ const ACTIONS = {
   time_logged: (a) => `logged ${fmtHours(Number(a.new_value))}`,
   overdue_alert: () => "flagged the ticket as overdue",
   converted: (a) => `created this ticket from the upcoming task "${a.new_value}"`,
+  release_added: (a) => `moved it into release ${a.new_value}`,
+  release_removed: (a) => `took it out of release ${a.old_value}`,
+  released: (a) => `released it to production in ${a.new_value}`,
 };
 
 function prettyValue(field, v, people) {
@@ -569,7 +574,8 @@ async function activity(el, t) {
   ]);
   const people = new Map(members.map((u) => [u.id, u.name]));
   [t.reporter, t.assignee].forEach((u) => u && people.set(u.id, u.name));
-  const shown = (a) => !["time_logged", "overdue_alert", "converted"].includes(a.action) && (a.old_value || a.new_value);
+  const shown = (a) => !["time_logged", "overdue_alert", "converted", "release_added", "release_removed", "released"].includes(a.action)
+    && (a.old_value || a.new_value);
   clear(el, items.length
     ? h("ol.timeline", items.map((a) => h("li",
       avatar(a.actor, "sm"),
