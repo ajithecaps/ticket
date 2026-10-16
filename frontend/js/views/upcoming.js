@@ -1,7 +1,7 @@
 // Upcoming tasks: per-project requirements gathered before a ticket exists. Admins edit; members read.
 import { api, auth, request } from "../api.js";
 import { navigate } from "../app.js";
-import { fetchOverlaps, overlapNote } from "../overlaps.js";
+import { fetchOverlaps, overlapCount } from "../overlaps.js";
 import {
   PRIORITIES, TYPES, avatar, busy, clear, confirmDialog, emptyState, field, fmtBytes, fmtDate, fromDateInput, h,
   label, markdownEditor, modal, priorityBadge, renderMarkdown, select, spinner, timeAgo, toDateInput, toast,
@@ -244,7 +244,7 @@ export async function renderUpcomingDetail(main, id) {
     const due = h("input", { type: "date", value: toDateInput(t.target_date), onchange: () => check() });
     const check = async () => {
       const ov = await fetchOverlaps(assignee, { end: fromDateInput(due.value) });
-      overlapSlot.replaceChildren(...[overlapNote(ov)].filter(Boolean));
+      overlapSlot.replaceChildren(...[overlapCount(ov)].filter(Boolean));
     };
     const est = h("input", { type: "number", min: 0, max: 10000, step: 0.5, placeholder: "hours" });
     const copyDocs = h("input", { type: "checkbox", checked: true });

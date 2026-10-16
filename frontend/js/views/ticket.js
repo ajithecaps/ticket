@@ -1,6 +1,6 @@
 import { api, auth } from "../api.js";
 import { navigate } from "../app.js";
-import { confirmIfOverlapping, fetchOverlaps, overlapNote } from "../overlaps.js";
+import { confirmIfOverlapping, fetchOverlaps, overlapCount } from "../overlaps.js";
 import {
   PRIORITIES, STATUSES, TYPES, avatar, busy, clear, confirmDialog, copyText, field, markdownEditor, renderMarkdown, fmtBytes, fmtDate, fmtDateTime,
   fmtHours, formData, fromDateInput, fromStartInput, h, label, modal, priorityBadge, select, statusBadge, timeAgo,
@@ -23,7 +23,7 @@ export function newTicketDialog(projects, preselect, ctx) {
   async function checkOverlap() {
     const req = ++overlapReq;
     const ov = await fetchOverlaps(assignee, { start: fromStartInput(startInput.value), end: fromDateInput(dueInput.value) });
-    if (req === overlapReq) overlapSlot.replaceChildren(...[overlapNote(ov)].filter(Boolean));
+    if (req === overlapReq) overlapSlot.replaceChildren(...[overlapCount(ov)].filter(Boolean));
   }
   const projectSel = select("project", projects.map((p) => [String(p.id), `${p.key} · ${p.name}`]), preselect || projects[0]?.id, {
     onchange: () => drawAssignee(),
@@ -259,7 +259,7 @@ export async function renderTicket(main, key) {
     const clashSlot = h("div.clash-slot");
     if (t.assignee && t.due_date && !["done", "verified"].includes(t.status) && (canOwner || t.assignee.id === auth.user.id)) {
       fetchOverlaps(t.assignee, { start: t.start_date, end: t.due_date, excludeId: t.id })
-        .then((ov) => clashSlot.replaceChildren(...[overlapNote(ov, { compact: true })].filter(Boolean)));
+        .then((ov) => clashSlot.replaceChildren(...[overlapCount(ov)].filter(Boolean)));
     }
 
     clear(sidebar, h("div.card.props",

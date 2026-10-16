@@ -851,3 +851,11 @@ th.sortable:hover { color: var(--text); }
   .gantt .c-key { display: none; }
   .g-stats { display: none; }
 }
+
+.overlap-count {
+  display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;
+  font-size: 12px; color: var(--warn); background: var(--warn-soft);
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--border)); border-radius: 6px; padding: 2px 8px;
+}
+.overlap-count strong { font-weight: 700; }
+.overlap-count .link { font-weight: 600; }

@@ -30,6 +30,32 @@ export function overlapNote(ov, { compact = false } = {}) {
     ov.hidden_count ? h("li.muted.small", `+${ov.hidden_count} in project${ov.hidden_count > 1 ? "s" : ""} you can't see`) : null));
 }
 
+const pad = (n) => String(n).padStart(2, "0");
+/** Timeline link for this person, opened on the week the clash starts. */
+function timelineHref(ov) {
+  const d = new Date(ov.start);
+  const monday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() + 6) % 7));
+  return `#/timeline?person=${ov.user.id}&from=${monday.getFullYear()}-${pad(monday.getMonth() + 1)}-${pad(monday.getDate())}`;
+}
+
+/** One line: "⚠ 2 overlapping tickets · View" - View opens the list (and a link to the timeline). */
+export function overlapCount(ov) {
+  const n = count(ov);
+  if (!n) return null;
+  const open = () => {
+    const m = modal(`${ov.user.name}: overlapping tickets`, [
+      h("p.muted", `${fmtDate(ov.start)} → ${fmtDate(ov.end)}`),
+      overlapNote(ov),
+      h("div.form-actions",
+        h("a.btn", { href: timelineHref(ov), onclick: () => m.close() }, "Open in timeline"),
+        h("button.btn.primary", { onclick: () => m.close() }, "Close")),
+    ], { wide: true });
+  };
+  return h("div.overlap-count", { role: "status" },
+    h("span", { title: `${n} other ticket${n > 1 ? "s" : ""} assigned to ${ov.user.name} in the same days` }, "⚠ ", h("strong", String(n)), " overlapping"),
+    h("button.link.small", { type: "button", onclick: open }, "View"));
+}
+
 /** Before assigning: if the person is busy then, ask. Resolves true to go ahead. */
 export async function confirmIfOverlapping(user, opts) {
   const ov = await fetchOverlaps(user, opts);
