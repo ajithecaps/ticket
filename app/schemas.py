@@ -548,6 +548,7 @@ class TimelineTicket(TicketOut):
     window_end: datetime  # due_date
     start_planned: bool  # True when window_start is the ticket's own start_date
     overlaps: list[str] = []  # keys of this person's other tickets in the same days
+    can_reschedule: bool = False  # the caller may change start / due date (project owner or admin)
 
 
 class TimelineRow(BaseModel):

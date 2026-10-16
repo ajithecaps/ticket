@@ -277,9 +277,13 @@ date it runs from when work started / it was assigned / it was created. Tickets 
   converting an upcoming task) looks up that person's other open tickets in the same days and shows them;
   in the sidebar it asks *Assign anyway / Pick someone else*. Clashes in projects the caller cannot see are
   counted but not shown. The ticket page also warns when its current assignee is double-booked.
-- **Timeline** (sidebar, and a tab on each project) - a Gantt-style calendar: one row per person, one bar
-  per ticket, 2 weeks / 4 weeks / 3 months, weekends shaded, a today line. Overlapping tickets are stacked
-  and outlined red, a red strip marks days with 2+ tickets, dashed bars have no planned start.
+- **Timeline** (sidebar, and a tab on each project) - a Gantt chart: a task list (key, title, start, due,
+  days) next to one bar per ticket, grouped by person or by project in collapsible groups. Day / Week /
+  Month zoom with a two-level calendar header, weekends shaded, a today line, and releases shown as ◆
+  milestones. Bars fill with progress (status, or time spent vs. estimate); overlapping tickets are outlined
+  red and each group has a workload heat strip (1 / 2 / 3+ tickets a day). Hover a bar for details.
+  **Project owners and admins can drag a bar to move it, or drag either end to change the start or due
+  date** - saved immediately, overlaps are recalculated.
   Scope: **admin** - everyone; **project owner** - the people and tickets of the projects they own (plus
   their own work); **developer** - their own tickets. Released tickets are left out; *Show finished*
   adds done / verified ones.

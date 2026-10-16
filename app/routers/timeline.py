@@ -23,12 +23,11 @@ router = APIRouter(prefix="/timeline", tags=["Timeline"])
 MAX_DAYS = 370
 
 
-def _timeline_ticket(t: Ticket, w, overlaps: list[str]) -> TimelineTicket:
-    item = TimelineTicket.model_validate(
+def _timeline_ticket(t: Ticket, w, overlaps: list[str], can_reschedule: bool = False) -> TimelineTicket:
+    return TimelineTicket.model_validate(
         {**TicketOut.model_validate(t).model_dump(), "window_start": w[0], "window_end": w[1],
-         "start_planned": t.start_date is not None, "overlaps": overlaps}
+         "start_planned": t.start_date is not None, "overlaps": overlaps, "can_reschedule": can_reschedule}
     )
-    return item
 
 
 def _member_projects(db, user_id: int) -> set[int]:
@@ -103,6 +102,7 @@ def timeline(
         mine = _open_assigned(db, project_ids=_member_projects(db, user.id), assignee_ids={user.id}, include_done=include_done)
         tickets = list({t.id: t for t in [*tickets, *mine]}.values())
 
+    owns = (lambda pid: True) if is_admin(user) else (lambda pid, _o=_owned_projects(db, user.id): pid in _o)
     per_person: dict[int, list[Ticket]] = defaultdict(list)
     for t in tickets:
         per_person[t.assignee_id].append(t)
@@ -117,7 +117,7 @@ def timeline(
         for t in items:
             w = window(t)
             if w is not None and intersects(w, rng):
-                scheduled.append(_timeline_ticket(t, w, overlaps.get(t.id, [])))
+                scheduled.append(_timeline_ticket(t, w, overlaps.get(t.id, []), owns(t.project_id)))
         scheduled.sort(key=lambda x: (x.window_start, x.window_end))
         unscheduled = [TicketOut.model_validate(t) for t in open_items if t.due_date is None][:25]
         rows.append(TimelineRow(
