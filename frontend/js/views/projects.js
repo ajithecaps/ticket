@@ -8,6 +8,7 @@ import { filteredTicketList } from "./ticketlist.js";
 import { newTicketDialog } from "./ticket.js";
 import { renderProjectUpcoming } from "./upcoming.js";
 import { addToReleaseDialog, renderProjectReleases } from "./releases.js";
+import { renderTimeline } from "./timeline.js";
 
 const isAdmin = () => auth.user.role === "admin";
 
@@ -82,7 +83,7 @@ export async function renderProject(main, id, tab) {
   const [project, members] = await Promise.all([api.get(`/projects/${id}`), api.get(`/projects/${id}/members`)]);
   const owner = project.my_role === "owner" || project.my_role === "admin";
 
-  const tabs = [["board", "Board"], ["list", "List"], ["upcoming", "Upcoming"], ["releases", "Releases"], ["members", `Members (${members.length})`]];
+  const tabs = [["board", "Board"], ["list", "List"], ["timeline", "Timeline"], ["upcoming", "Upcoming"], ["releases", "Releases"], ["members", `Members (${members.length})`]];
   if (owner) tabs.push(["settings", "Settings"]);
 
   const body = h("div.tab-body");
@@ -105,7 +106,8 @@ export async function renderProject(main, id, tab) {
       showProject: false,
       assignees: members.map((m) => [String(m.user.id), m.user.name]),
     }));
-  } else if (tab === "upcoming") await renderProjectUpcoming(body, project);
+  } else if (tab === "timeline") await renderTimeline(body, { projectId: project.id });
+  else if (tab === "upcoming") await renderProjectUpcoming(body, project);
   else if (tab === "releases") await renderProjectReleases(body, project);
   else if (tab === "members") renderMembers(body, project, members, owner);
   else if (tab === "settings" && owner) renderSettings(body, project);

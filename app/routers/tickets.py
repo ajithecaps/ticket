@@ -217,12 +217,17 @@ def _label(ticket: Ticket) -> str:
     return f"{ticket.key} {ticket.title}"
 
 
+def _check_window(start, due) -> None:
+    if start is not None and due is not None and ensure_utc(start) > ensure_utc(due):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "The start date must be on or before the due date")
+
+
 def _describe_changes(changes: list[tuple[str, object, object]]) -> str:
     """'priority medium → high, due date 20 Oct 2026, description edited'."""
     def fmt(field, v):
         if v is None or v == "":
             return "none"
-        if field == "due_date":
+        if field in ("due_date", "start_date"):
             return f"{v:%d %b %Y}"
         if field == "estimated_hours":
             return f"{v:g}h"
@@ -371,6 +376,9 @@ def create_ticket(project_id: int, payload: TicketCreate, user: CurrentUser, db:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "This project is archived")
 
     owner = is_project_owner(db, user, project_id)
+    if payload.start_date is not None and not owner:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only project owners can plan the start date")
+    _check_window(payload.start_date, payload.due_date)
     if payload.assignee_id is not None:
         if not owner:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Only project owners can assign tickets")
@@ -386,6 +394,7 @@ def create_ticket(project_id: int, payload: TicketCreate, user: CurrentUser, db:
         reporter_id=user.id,
         assignee_id=payload.assignee_id,
         assigned_at=utcnow() if payload.assignee_id else None,
+        start_date=ensure_utc(payload.start_date),
         due_date=ensure_utc(payload.due_date),
         estimated_hours=payload.estimated_hours,
     )
@@ -438,6 +447,7 @@ def update_ticket(ticket_id: int, payload: TicketUpdate, user: CurrentUser, db: 
         "description": perms["can_edit"],
         "type": perms["can_edit"],
         "priority": perms["owner"],
+        "start_date": perms["owner"],
         "due_date": perms["owner"],
         "estimated_hours": perms["owner"] or perms["assignee"],
     }
@@ -449,8 +459,10 @@ def update_ticket(ticket_id: int, payload: TicketUpdate, user: CurrentUser, db: 
             raise HTTPException(422, f"{required} cannot be null")
     if "description" in data and data["description"] is None:
         data["description"] = ""
-    if "due_date" in data:
-        data["due_date"] = ensure_utc(data["due_date"])
+    for key in ("start_date", "due_date"):
+        if key in data:
+            data[key] = ensure_utc(data[key])
+    _check_window(data.get("start_date", ticket.start_date), data.get("due_date", ticket.due_date))
 
     changed: list[str] = []
     changes: list[tuple[str, object, object]] = []

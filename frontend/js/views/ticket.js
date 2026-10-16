@@ -1,8 +1,9 @@
 import { api, auth } from "../api.js";
 import { navigate } from "../app.js";
+import { confirmIfOverlapping, fetchOverlaps, overlapNote } from "../overlaps.js";
 import {
   PRIORITIES, STATUSES, TYPES, avatar, busy, clear, confirmDialog, copyText, field, markdownEditor, renderMarkdown, fmtBytes, fmtDate, fmtDateTime,
-  fmtHours, formData, fromDateInput, h, label, modal, priorityBadge, select, statusBadge, timeAgo,
+  fmtHours, formData, fromDateInput, fromStartInput, h, label, modal, priorityBadge, select, statusBadge, timeAgo,
   toDateInput, toast, typeBadge, userChip, userPicker,
 } from "../ui.js";
 
@@ -14,6 +15,16 @@ import {
 export function newTicketDialog(projects, preselect, ctx) {
   let assignee = null;
   const assigneeSlot = h("div");
+  const startSlot = h("div");
+  const overlapSlot = h("div");
+  const startInput = h("input", { type: "date", name: "start_date", onchange: () => checkOverlap() });
+  const dueInput = h("input", { type: "date", name: "due_date", onchange: () => checkOverlap() });
+  let overlapReq = 0;
+  async function checkOverlap() {
+    const req = ++overlapReq;
+    const ov = await fetchOverlaps(assignee, { start: fromStartInput(startInput.value), end: fromDateInput(dueInput.value) });
+    if (req === overlapReq) overlapSlot.replaceChildren(...[overlapNote(ov)].filter(Boolean));
+  }
   const projectSel = select("project", projects.map((p) => [String(p.id), `${p.key} · ${p.name}`]), preselect || projects[0]?.id, {
     onchange: () => drawAssignee(),
   });
@@ -23,7 +34,10 @@ export function newTicketDialog(projects, preselect, ctx) {
     const p = projects.find((x) => String(x.id) === projectSel.value);
     const isOwner = ctx ? ctx.owner : p && (p.my_role === "owner" || p.my_role === "admin");
     clear(assigneeSlot, isOwner && field("Assignee",
-      userPicker((q) => api.get("/users/lookup", { q, project_id: p.id, limit: 10 }), (u) => { assignee = u; }, { allowNone: true, placeholder: "Unassigned" })));
+      userPicker((q) => api.get("/users/lookup", { q, project_id: p.id, limit: 10 }), (u) => { assignee = u; checkOverlap(); }, { allowNone: true, placeholder: "Unassigned" })));
+    startInput.value = isOwner ? startInput.value : "";
+    clear(startSlot, isOwner && field("Start date", startInput));
+    checkOverlap();
   }
 
   const descEditor = markdownEditor({ rows: 7, label: "Description", placeholder: "Steps to reproduce, acceptance criteria, links… Markdown is supported." });
@@ -31,13 +45,15 @@ export function newTicketDialog(projects, preselect, ctx) {
     projects.length > 1 ? field("Project", projectSel) : null,
     field("Title", h("input", { name: "title", required: true, maxLength: 255, placeholder: "Short summary" })),
     h("div.field", h("span.field-label", "Description"), descEditor.el),
-    h("div.grid-3.tight",
-      field("Type", select("type", TYPES, "task")),
-      field("Priority", select("priority", PRIORITIES, "medium")),
-      field("Due date", h("input", { type: "date", name: "due_date" }))),
     h("div.grid-2.tight",
-      field("Estimate (hours)", h("input", { type: "number", name: "estimated_hours", min: 0, max: 10000, step: 0.5 })),
-      assigneeSlot),
+      field("Type", select("type", TYPES, "task")),
+      field("Priority", select("priority", PRIORITIES, "medium"))),
+    h("div.grid-3.tight",
+      startSlot,
+      field("Due date", dueInput),
+      field("Estimate (hours)", h("input", { type: "number", name: "estimated_hours", min: 0, max: 10000, step: 0.5 }))),
+    assigneeSlot,
+    overlapSlot,
     h("div.form-actions", h("button.btn.primary", { type: "submit" }, "Create ticket")));
   drawAssignee();
 
@@ -50,6 +66,7 @@ export function newTicketDialog(projects, preselect, ctx) {
       due_date: fromDateInput(d.due_date),
       estimated_hours: d.estimated_hours === "" ? null : Number(d.estimated_hours),
     };
+    if (startInput.value && startSlot.childElementCount) body.start_date = fromStartInput(startInput.value);
     if (assignee) body.assignee_id = assignee.id;
     busy(form.querySelector("[type=submit]"), async () => {
       const t = await api.post(`/projects/${projectSel.value}/tickets`, body);
@@ -216,6 +233,10 @@ export async function renderTicket(main, key) {
         userPicker((q) => api.get("/users/lookup", { q, project_id: t.project.id, limit: 10 }), (u) => {
           if ((u?.id ?? null) === (t.assignee?.id ?? null)) return;
           busy(null, async () => {
+            if (u && !(await confirmIfOverlapping(u, { start: t.start_date, end: t.due_date, excludeId: t.id }))) {
+              drawSidebar(); // back to the current assignee
+              return;
+            }
             await api.post(`/tickets/${t.id}/assign`, { assignee_id: u ? u.id : null });
             toast(u ? `Assigned to ${u.name}` : "Unassigned");
             await refresh(); loadTab();
@@ -226,18 +247,31 @@ export async function renderTicket(main, key) {
 
     const meAssign = canOwner && t.assignee?.id !== auth.user.id && t.status !== "done" &&
       h("button.link.small", {
-        onclick: () => busy(null, async () => { await api.post(`/tickets/${t.id}/assign`, { assignee_id: auth.user.id }); toast("Assigned to you"); await refresh(); loadTab(); }),
+        onclick: () => busy(null, async () => {
+          if (!(await confirmIfOverlapping(auth.user, { start: t.start_date, end: t.due_date, excludeId: t.id }))) return;
+          await api.post(`/tickets/${t.id}/assign`, { assignee_id: auth.user.id }); toast("Assigned to you"); await refresh(); loadTab();
+        }),
       }, "Assign to me");
 
     const row = (name, value) => h("div.prop", h("span.prop-label", name), h("div.prop-value", value));
 
+    // The current assignee's other work in the same days (owners, or the assignee looking at their own ticket).
+    const clashSlot = h("div.clash-slot");
+    if (t.assignee && t.due_date && !["done", "verified"].includes(t.status) && (canOwner || t.assignee.id === auth.user.id)) {
+      fetchOverlaps(t.assignee, { start: t.start_date, end: t.due_date, excludeId: t.id })
+        .then((ov) => clashSlot.replaceChildren(...[overlapNote(ov, { compact: true })].filter(Boolean)));
+    }
+
     clear(sidebar, h("div.card.props",
-      row("Assignee", [assigneeCell, meAssign]),
+      row("Assignee", [assigneeCell, meAssign, clashSlot]),
       row("Reporter", userChip(t.reporter)),
       t.release && row("Release", h("a.badge.rel-chip", { href: `#/releases/${t.release.id}` },
         t.release.status === "released" ? `🚀 ${t.release.name} · released ${fmtDate(t.release.released_at)}` : `${t.release.name} · planned`)),
       row("Type", t.can_edit ? select("type", TYPES, t.type, { "aria-label": "Type", onchange: (e) => patch({ type: e.target.value }) }) : label(t.type)),
       row("Priority", canOwner ? select("priority", PRIORITIES, t.priority, { "aria-label": "Priority", onchange: (e) => patch({ priority: e.target.value }) }) : priorityBadge(t.priority)),
+      row("Start date", canOwner
+        ? h("input", { type: "date", value: toDateInput(t.start_date), "aria-label": "Start date", onchange: (e) => patch({ start_date: fromStartInput(e.target.value) }) })
+        : h("span", t.start_date ? fmtDate(t.start_date) : h("span.muted", "Not planned"))),
       row("Due date", canOwner
         ? h("input", { type: "date", value: toDateInput(t.due_date), "aria-label": "Due date", onchange: (e) => patch({ due_date: fromDateInput(e.target.value) }) })
         : h(`span${t.is_overdue ? ".danger-text" : ""}`, fmtDate(t.due_date))),

@@ -202,7 +202,8 @@ app/
   jobs.py          overdue alerts, daily summary, scheduler thread
   routers/upcoming.py  upcoming tasks (requirements before tickets)
   routers/releases.py  releases: finished tickets shipped to production
-migrations/        Alembic environment and versions (0001 baseline, 0002 upcoming tasks, 0003 releases)
+  routers/timeline.py  timeline (gantt) and overlap check; schedule.py has the window logic
+migrations/        Alembic environment and versions (0001 baseline, 0002 upcoming, 0003 releases, 0004 start date)
   routers/         auth, users, projects, tickets, comments, attachments, notifications, reports
 frontend/          single-page web UI (plain HTML/CSS/JS modules, no build step), served at /
 tests/             14 end-to-end tests against the real API
@@ -264,6 +265,27 @@ acceptance criteria (a checklist with a progress meter), reference links and doc
 - API: `GET /upcoming` · `GET|POST /projects/{id}/upcoming` · `GET|PATCH|DELETE /upcoming/{id}` ·
   `POST /upcoming/{id}/documents` · `GET /upcoming-documents/{id}/download` ·
   `DELETE /upcoming-documents/{id}` · `POST /upcoming/{id}/convert`
+
+## Timeline and overlap checks
+
+Tickets have an optional **start date** next to the due date (both set by project owners); the start
+date may not be after the due date. A ticket's planned window is *start date → due date*; without a start
+date it runs from when work started / it was assigned / it was created. Tickets without a due date are
+"unscheduled" and never clash.
+
+- **Overlap check when assigning** - picking an assignee (new ticket, the ticket sidebar, "Assign to me",
+  converting an upcoming task) looks up that person's other open tickets in the same days and shows them;
+  in the sidebar it asks *Assign anyway / Pick someone else*. Clashes in projects the caller cannot see are
+  counted but not shown. The ticket page also warns when its current assignee is double-booked.
+- **Timeline** (sidebar, and a tab on each project) - a Gantt-style calendar: one row per person, one bar
+  per ticket, 2 weeks / 4 weeks / 3 months, weekends shaded, a today line. Overlapping tickets are stacked
+  and outlined red, a red strip marks days with 2+ tickets, dashed bars have no planned start.
+  Scope: **admin** - everyone; **project owner** - the people and tickets of the projects they own (plus
+  their own work); **developer** - their own tickets. Released tickets are left out; *Show finished*
+  adds done / verified ones.
+
+API: `GET /timeline?start=&end=&project_id=&user_id=&include_done=` ·
+`GET /timeline/overlaps?user_id=&start=&end=&exclude_ticket_id=`
 
 ## Releases
 

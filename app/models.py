@@ -205,6 +205,8 @@ class Ticket(Base):
     reporter_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     assignee_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
 
+    # Planned window for the timeline / overlap checks: start_date -> due_date (both optional).
+    start_date: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     due_date: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     estimated_hours: Mapped[float | None] = mapped_column(Float, nullable=True)
     spent_hours: Mapped[float] = mapped_column(Float, default=0.0)

@@ -107,6 +107,13 @@ export function fromDateInput(value) {
   return new Date(y, m - 1, d, 23, 59, 59).toISOString();
 }
 
+/** Start dates are a day too; store the start of that local day. */
+export function fromStartInput(value) {
+  if (!value) return null;
+  const [y, m, d] = value.split("-").map(Number);
+  return new Date(y, m - 1, d, 0, 0, 0).toISOString();
+}
+
 export const fmtPct = (v) => (v === null || v === undefined ? "—" : `${Math.round(v * 100)}%`);
 export const fmtHours = (v) => (v === null || v === undefined ? "—" : `${Math.round(v * 10) / 10}h`);
 export function fmtBytes(n) {

@@ -149,6 +149,7 @@ class TicketCreate(BaseModel):
     priority: TicketPriority = TicketPriority.MEDIUM
     type: TicketType = TicketType.TASK
     assignee_id: int | None = Field(None, description="Project owners / admin only")
+    start_date: datetime | None = Field(None, description="Planned start (project owners / admin)")
     due_date: datetime | None = None
     estimated_hours: float | None = Field(None, ge=0, le=10000)
 
@@ -166,6 +167,7 @@ class TicketUpdate(BaseModel):
     description: str | None = Field(None, max_length=20000)
     priority: TicketPriority | None = None
     type: TicketType | None = None
+    start_date: datetime | None = None
     due_date: datetime | None = None
     estimated_hours: float | None = Field(None, ge=0, le=10000)
 
@@ -197,6 +199,7 @@ class TicketOut(ORMModel):
     type: TicketType
     reporter: UserBrief
     assignee: UserBrief | None = None
+    start_date: datetime | None = None
     due_date: datetime | None = None
     is_overdue: bool
     estimated_hours: float | None = None
@@ -535,3 +538,35 @@ class ReleaseDetail(ReleaseOut):
 
 class ReleaseTicketsIn(BaseModel):
     ticket_ids: list[int] = Field(min_length=1, max_length=200)
+
+
+# --------------------------------------------------------------------------- #
+# Timeline / overlaps
+# --------------------------------------------------------------------------- #
+class TimelineTicket(TicketOut):
+    window_start: datetime  # start_date, else when work started / was assigned / created
+    window_end: datetime  # due_date
+    start_planned: bool  # True when window_start is the ticket's own start_date
+    overlaps: list[str] = []  # keys of this person's other tickets in the same days
+
+
+class TimelineRow(BaseModel):
+    user: UserBrief
+    tickets: list[TimelineTicket]
+    unscheduled: list[TicketOut]  # open tickets without a due date
+    overlap_count: int  # tickets in this row that overlap another one
+
+
+class TimelineOut(BaseModel):
+    start: datetime
+    end: datetime
+    scope: str  # "all" (admin) | "owned" (project owner) | "self"
+    rows: list[TimelineRow]
+
+
+class OverlapOut(BaseModel):
+    user: UserBrief
+    start: datetime
+    end: datetime
+    tickets: list[TimelineTicket]  # overlapping tickets the caller is allowed to see
+    hidden_count: int  # overlapping tickets in projects the caller cannot see

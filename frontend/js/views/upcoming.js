@@ -1,6 +1,7 @@
 // Upcoming tasks: per-project requirements gathered before a ticket exists. Admins edit; members read.
 import { api, auth, request } from "../api.js";
 import { navigate } from "../app.js";
+import { fetchOverlaps, overlapNote } from "../overlaps.js";
 import {
   PRIORITIES, TYPES, avatar, busy, clear, confirmDialog, emptyState, field, fmtBytes, fmtDate, fromDateInput, h,
   label, markdownEditor, modal, priorityBadge, renderMarkdown, select, spinner, timeAgo, toDateInput, toast,
@@ -239,15 +240,21 @@ export async function renderUpcomingDetail(main, id) {
   function convertDialog() {
     let assignee = null;
     const typeSel = select("type", TYPES, "feature");
-    const due = h("input", { type: "date", value: toDateInput(t.target_date) });
+    const overlapSlot = h("div");
+    const due = h("input", { type: "date", value: toDateInput(t.target_date), onchange: () => check() });
+    const check = async () => {
+      const ov = await fetchOverlaps(assignee, { end: fromDateInput(due.value) });
+      overlapSlot.replaceChildren(...[overlapNote(ov)].filter(Boolean));
+    };
     const est = h("input", { type: "number", min: 0, max: 10000, step: 0.5, placeholder: "hours" });
     const copyDocs = h("input", { type: "checkbox", checked: true });
     const form = h("form.form",
       h("p.muted", "Creates a ticket in ", h("strong", t.project.name), " with the requirements, acceptance criteria and references in its description."),
       h("div.grid-2.tight", field("Type", typeSel), field("Due date", due)),
       h("div.grid-2.tight",
-        field("Assignee", userPicker((q) => api.get("/users/lookup", { q, project_id: t.project.id, limit: 10 }), (u) => { assignee = u; }, { allowNone: true, placeholder: "Unassigned" })),
+        field("Assignee", userPicker((q) => api.get("/users/lookup", { q, project_id: t.project.id, limit: 10 }), (u) => { assignee = u; check(); }, { allowNone: true, placeholder: "Unassigned" })),
         field("Estimate (hours)", est)),
+      overlapSlot,
       t.documents.length > 0 && h("label.check", copyDocs, `Attach the ${t.documents.length} document${t.documents.length > 1 ? "s" : ""} to the ticket`),
       h("div.form-actions", h("button.btn.primary", { type: "submit" }, "Create ticket")));
     const m = modal("Convert to ticket", form, { wide: true });

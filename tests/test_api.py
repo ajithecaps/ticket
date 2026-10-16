@@ -941,3 +941,102 @@ def test_releases(client, admin, world, monkeypatch):
     # released tickets still count in the efficiency report
     rep = client.get(f"{API}/reports/efficiency/{kiran['id']}", headers=admin, params={"project_id": ops["id"]}).json()
     assert rep["completed"] >= 3
+
+
+# --------------------------------------------------------------------------- #
+# Start dates, overlap check and the timeline
+# --------------------------------------------------------------------------- #
+def test_start_date_overlaps_and_timeline(client, admin, world):
+    from datetime import date as _date
+
+    owner = make_user(client, admin, "Olga Owner", "olga@example.com")
+    dev = make_user(client, admin, "Dev Dan", "dan@example.com")
+    other = make_user(client, admin, "Other Owen", "owen@example.com")
+    lead = make_user(client, admin, "Lead Lia", "lia@example.com")
+
+    def project(name, key, owner_id):
+        r = client.post(f"{API}/projects", headers=admin, json={"name": name, "key": key, "owner_ids": [owner_id]})
+        assert r.status_code == 201, r.text
+        return r.json()
+
+    tl, side = project("Timeline", "TL", owner["id"]), project("Side work", "SIDE", other["id"])
+    for p, h in ((tl, owner["headers"]), (side, other["headers"])):
+        assert client.post(f"{API}/projects/{p['id']}/members", headers=h, json={"user_id": dev["id"]}).status_code == 201
+
+    day = lambda n: iso(days=n)  # noqa: E731
+    # start after due is rejected; developers cannot plan the start
+    r = client.post(f"{API}/projects/{tl['id']}/tickets", headers=owner["headers"],
+                    json={"title": "bad", "start_date": day(5), "due_date": day(2)})
+    assert r.status_code == 400
+    r = client.post(f"{API}/projects/{tl['id']}/tickets", headers=dev["headers"], json={"title": "x", "start_date": day(1)})
+    assert r.status_code == 403
+
+    a = raise_ticket(client, owner["headers"], tl["id"], title="A", assignee_id=dev["id"], start_date=day(1), due_date=day(4))
+    b = raise_ticket(client, owner["headers"], tl["id"], title="B", assignee_id=dev["id"], start_date=day(3), due_date=day(6))
+    c = raise_ticket(client, owner["headers"], tl["id"], title="C", assignee_id=dev["id"], start_date=day(10), due_date=day(12))
+    hidden = raise_ticket(client, other["headers"], side["id"], title="Secret", assignee_id=dev["id"],
+                          start_date=day(2), due_date=day(3))
+    nodue = raise_ticket(client, owner["headers"], tl["id"], title="Someday", assignee_id=dev["id"])
+    assert a["start_date"] is not None
+
+    # overlap check for a new piece of work on days 2..5: A and B visible, the other project's one only counted
+    r = client.get(f"{API}/timeline/overlaps", headers=owner["headers"],
+                   params={"user_id": dev["id"], "start": day(2), "end": day(5)})
+    assert r.status_code == 200, r.text
+    ov = r.json()
+    assert [t["key"] for t in ov["tickets"]] == [a["key"], b["key"]] and ov["hidden_count"] == 1
+    # the admin sees all three; the ticket being reassigned is excluded
+    ov = client.get(f"{API}/timeline/overlaps", headers=admin,
+                    params={"user_id": dev["id"], "start": day(2), "end": day(5), "exclude_ticket_id": a["id"]}).json()
+    assert {t["key"] for t in ov["tickets"]} == {b["key"], hidden["key"]} and ov["hidden_count"] == 0
+    # no clash on free days; developers cannot probe other people
+    assert client.get(f"{API}/timeline/overlaps", headers=owner["headers"],
+                      params={"user_id": dev["id"], "start": day(7), "end": day(9)}).json()["tickets"] == []
+    assert client.get(f"{API}/timeline/overlaps", headers=dev["headers"],
+                      params={"user_id": owner["id"], "end": day(3)}).status_code == 403
+    assert client.get(f"{API}/timeline/overlaps", headers=lead["headers"],
+                      params={"user_id": dev["id"], "end": day(3)}).status_code == 403
+
+    start = _date.today().isoformat()
+    # owner: the people of their projects, only those projects' tickets
+    tlo = client.get(f"{API}/timeline", headers=owner["headers"], params={"start": start}).json()
+    assert tlo["scope"] == "owned"
+    row = next(r for r in tlo["rows"] if r["user"]["id"] == dev["id"])
+    keys = [t["key"] for t in row["tickets"]]
+    assert keys == [a["key"], b["key"], c["key"]] and hidden["key"] not in keys
+    by_key = {t["key"]: t for t in row["tickets"]}
+    assert by_key[a["key"]]["overlaps"] == [b["key"]] and by_key[c["key"]]["overlaps"] == []
+    assert row["overlap_count"] == 2 and [t["key"] for t in row["unscheduled"]] == [nodue["key"]]
+    assert by_key[a["key"]]["start_planned"] is True
+
+    # admin: everyone, every project; the other project's ticket now overlaps A and B
+    tla = client.get(f"{API}/timeline", headers=admin, params={"start": start, "user_id": dev["id"]}).json()
+    assert tla["scope"] == "all"
+    keys = {t["key"]: t for t in tla["rows"][0]["tickets"]}
+    assert hidden["key"] in keys and set(keys[a["key"]]["overlaps"]) == {b["key"], hidden["key"]}
+    # filtered to one project
+    tlp = client.get(f"{API}/timeline", headers=admin, params={"start": start, "project_id": side["id"]}).json()
+    assert {t["key"] for r in tlp["rows"] for t in r["tickets"]} == {hidden["key"]}
+
+    # developer: only their own row
+    tld = client.get(f"{API}/timeline", headers=dev["headers"], params={"start": start}).json()
+    assert tld["scope"] == "self" and [r["user"]["id"] for r in tld["rows"]] == [dev["id"]]
+    assert client.get(f"{API}/timeline", headers=dev["headers"], params={"user_id": owner["id"]}).status_code == 404
+
+    # a range that misses everything; finished tickets drop off unless asked for
+    far = client.get(f"{API}/timeline", headers=owner["headers"],
+                     params={"start": "2030-01-01", "end": "2030-01-31", "user_id": dev["id"]}).json()
+    assert far["rows"][0]["tickets"] == []
+    set_status(client, dev["headers"], c["id"], "in_progress")
+    set_status(client, dev["headers"], c["id"], "done")
+    row = client.get(f"{API}/timeline", headers=owner["headers"], params={"start": start, "user_id": dev["id"]}).json()["rows"][0]
+    assert c["key"] not in [t["key"] for t in row["tickets"]]
+    row = client.get(f"{API}/timeline", headers=owner["headers"],
+                     params={"start": start, "user_id": dev["id"], "include_done": True}).json()["rows"][0]
+    assert c["key"] in [t["key"] for t in row["tickets"]]
+    assert client.get(f"{API}/timeline", headers=owner["headers"], params={"start": "2026-01-10", "end": "2026-01-01"}).status_code == 400
+
+    # the start date is editable by owners only, and validated against the due date
+    assert client.patch(f"{API}/tickets/{a['id']}", headers=dev["headers"], json={"start_date": day(0)}).status_code == 403
+    assert client.patch(f"{API}/tickets/{a['id']}", headers=owner["headers"], json={"start_date": day(9)}).status_code == 400
+    assert client.patch(f"{API}/tickets/{a['id']}", headers=owner["headers"], json={"start_date": day(0)}).status_code == 200
