@@ -750,7 +750,7 @@ function renderControls() {
     mini ? null : ctl("screen-share", state.screen ? "Stop sharing" : "Share screen", toggleScreen, { on: !state.screen, cls: state.screen ? "sharing" : "" }),
     ctl("smile", "React", (e) => reactMenu(e.currentTarget)),
     mini ? null : ctl("hand", state.hand ? "Lower hand" : "Raise hand", toggleHand, { on: !state.hand, cls: state.hand ? "hand-up" : "" }),
-    mini ? null : ctl("user-plus", "Add people", (e) => addPeopleMenu(e.currentTarget)),
+    ctl("user-plus", "Add people", (e) => { if (state.minimized) expand(); addPeopleMenu(e.currentTarget.isConnected ? e.currentTarget : state.ui.controls.querySelector(".call-ctl[aria-label='Add people']")); }),
     mini ? null : ctl("grid", state.layout === "grid" ? "Spotlight" : "Grid", () => { state.layout = state.layout === "grid" ? "spotlight" : "grid"; renderControls(); renderTiles(); }),
     mini ? null : ctl("settings", "Settings", (e) => settingsMenu(e.currentTarget)),
     mini ? null : ctl("maximize", document.fullscreenElement ? "Exit full screen" : "Full screen", toggleFullscreen),
@@ -918,6 +918,12 @@ function addPeopleMenu(anchor) {
     ring.querySelector("span").textContent = chosen.size ? `Ring ${chosen.size} ${chosen.size === 1 ? "person" : "people"}` : "Ring";
   };
   search.addEventListener("input", paint);
+  // fresh list (new people, who is online right now)
+  api.get("/chat/users").then((list) => {
+    const map = users();
+    list.forEach((u) => map.set(u.id, u));
+    if (panel.isConnected) paint();
+  }).catch(() => {});
   ring.addEventListener("click", async () => {
     ring.disabled = true;
     try {

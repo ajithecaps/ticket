@@ -63,6 +63,23 @@ def bootstrap_admin() -> None:
         )
 
 
+def _warn_if_schema_behind() -> None:
+    """New features fail with 500s when the database misses their migration - say so loudly."""
+    try:
+        from alembic.config import Config
+        from alembic.runtime.migration import MigrationContext
+        from alembic.script import ScriptDirectory
+
+        root = Path(__file__).resolve().parent.parent
+        head = ScriptDirectory.from_config(Config(str(root / "alembic.ini"))).get_current_head()
+        with engine.connect() as conn:
+            current = MigrationContext.configure(conn).get_current_revision()
+        if current != head:
+            logger.error("Database schema is at %s but the code expects %s - run 'alembic upgrade head'.", current, head)
+    except Exception as exc:  # noqa: BLE001 - only a diagnostic
+        logger.warning("Could not check the database schema version: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     if settings.SECRET_KEY == "change-me":
@@ -78,6 +95,7 @@ async def lifespan(_app: FastAPI):
         exist_ok=True,
     )
 
+    _warn_if_schema_behind()
     bootstrap_admin()
     runtime_config.refresh_if_stale(0)  # settings saved from the admin panel
     scheduler.start()  # overdue alerts + daily Slack summary
@@ -133,9 +151,21 @@ def health():
 
 # The single-page frontend (plain HTML/JS, no build step). Routing is hash-based, so only "/" is needed.
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+
+
+class _RevalidatedStatic(StaticFiles):
+    """Browsers must check for a newer copy on every load (a cheap 304 when nothing changed), so a
+    deploy shows up straight away instead of people running yesterday's JavaScript."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 if FRONTEND_DIR.is_dir():
-    app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="frontend")
+    app.mount("/static", _RevalidatedStatic(directory=FRONTEND_DIR), name="frontend")
 
     @app.get("/", include_in_schema=False)
     def frontend_index():
-        return FileResponse(FRONTEND_DIR / "index.html")
+        return FileResponse(FRONTEND_DIR / "index.html", headers={"Cache-Control": "no-cache"})
