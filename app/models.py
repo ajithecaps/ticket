@@ -632,6 +632,7 @@ class ChatCall(Base):
     ended_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
 
     participants: Mapped[list["ChatCallParticipant"]] = relationship(cascade="all, delete-orphan", lazy="selectin")
+    invites: Mapped[list["ChatCallInvite"]] = relationship(cascade="all, delete-orphan", lazy="selectin")
 
 
 class ChatCallParticipant(Base):
@@ -641,3 +642,14 @@ class ChatCallParticipant(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     joined_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     left_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+
+
+class ChatCallInvite(Base):
+    """Someone rung into a call after it started - they may join even if they can't read the conversation."""
+
+    __tablename__ = "chat_call_invites"
+
+    call_id: Mapped[int] = mapped_column(ForeignKey("chat_calls.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    invited_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    invited_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)

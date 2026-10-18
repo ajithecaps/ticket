@@ -22,6 +22,7 @@ from ..database import SessionLocal
 from ..deps import AdminUser, CurrentUser, DbSession
 from ..models import (
     ChatCall,
+    ChatCallInvite,
     ChatCallParticipant,
     ChatChannel,
     ChatFile,
@@ -179,6 +180,7 @@ def _call_out(call: ChatCall) -> dict:
         "started_by": call.started_by, "started_at": call.started_at, "answered_at": call.answered_at, "ended_at": call.ended_at,
         "active": call.ended_at is None, "duration_seconds": duration,
         "participant_ids": active, "joined_ids": sorted({p.user_id for p in call.participants}),
+        "invited_ids": sorted(i.user_id for i in call.invites),
     }
 
 
@@ -915,15 +917,38 @@ def rtc_config(_user: CurrentUser):
 
 
 def _active_call(db: Session, channel_id: int) -> ChatCall | None:
-    return db.scalar(select(ChatCall).where(ChatCall.channel_id == channel_id, ChatCall.ended_at.is_(None)).order_by(ChatCall.id.desc()))
+    call = db.scalar(select(ChatCall).where(ChatCall.channel_id == channel_id, ChatCall.ended_at.is_(None)).order_by(ChatCall.id.desc()))
+    if call is not None and _close_if_empty(db, call):
+        return None
+    return call
+
+
+def _close_if_empty(db: Session, call: ChatCall) -> bool:
+    """Safety net: a call nobody is in any more is over (e.g. everyone's browser crashed)."""
+    if call.ended_at is not None or any(p.left_at is None for p in call.participants):
+        return False
+    ch = db.get(ChatChannel, call.channel_id)
+    if ch is not None:
+        _end_call(db, call, ch)
+        db.commit()
+    return True
 
 
 def _call_or_404(db: Session, call_id: int, user: User) -> tuple[ChatCall, ChatChannel]:
     call = db.get(ChatCall, call_id)
     ch = db.get(ChatChannel, call.channel_id) if call else None
-    if call is None or ch is None or not _can_read(db, ch, user):
+    if call is None or ch is None or not (_can_read(db, ch, user) or _invited(call, user.id)):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Call not found")
     return call, ch
+
+
+def _invited(call: ChatCall, user_id: int) -> bool:
+    return any(i.user_id == user_id for i in call.invites)
+
+
+def _call_people(db: Session, call: ChatCall, ch: ChatChannel) -> set[int]:
+    """Everyone who should hear about the call: the conversation, plus anyone added to the call."""
+    return channel_audience(db, ch) | {i.user_id for i in call.invites} | {p.user_id for p in call.participants}
 
 
 def _participant(call: ChatCall, user_id: int) -> ChatCallParticipant | None:
@@ -932,7 +957,7 @@ def _participant(call: ChatCall, user_id: int) -> ChatCallParticipant | None:
 
 def _call_changed(db: Session, call: ChatCall, ch: ChatChannel, type_: str = "call.update", **extra) -> None:
     db.flush()
-    emit(db, type_, {"call": _call_out(call), **extra}, channel_id=ch.id)
+    emit(db, type_, {"call": _call_out(call), **extra}, channel_id=ch.id, user_ids=_call_people(db, call, ch))
     if call.message_id:
         msg = db.get(ChatMessage, call.message_id)
         if msg is not None:
@@ -955,13 +980,23 @@ def _channel_label(ch: ChatChannel, viewer: User | None = None) -> str:
     return f"#{ch.name}" if ch.kind == "channel" else "Direct message"
 
 
+def _call_label(db: Session, call: ChatCall, ch: ChatChannel, viewer: User) -> str:
+    if ch.kind != "dm":
+        return _channel_label(ch)
+    ids = {p.user_id for p in call.participants if p.left_at is None} | ({call.started_by} if call.started_by else set())
+    names = sorted(db.scalars(select(User.name).where(User.id.in_(ids - {viewer.id})))) if ids - {viewer.id} else []
+    return f"Call with {', '.join(names)}" if names else "Call"
+
+
 @router.get("/calls/active", summary="Calls going on in conversations you can see")
 def active_calls(user: CurrentUser, db: DbSession):
     out = []
     for call in db.scalars(select(ChatCall).where(ChatCall.ended_at.is_(None))).all():
+        if _close_if_empty(db, call):
+            continue
         ch = db.get(ChatChannel, call.channel_id)
-        if ch and _can_read(db, ch, user):
-            out.append({**_call_out(call), "channel_label": _channel_label(ch)})
+        if ch and (_can_read(db, ch, user) or _invited(call, user.id)):
+            out.append({**_call_out(call), "channel_label": _call_label(db, call, ch, user)})
     return out
 
 
@@ -999,7 +1034,7 @@ def join_call(call_id: int, user: CurrentUser, db: DbSession):
     call, ch = _call_or_404(db, call_id, user)
     if call.ended_at is not None:
         raise HTTPException(status.HTTP_410_GONE, "This call has ended")
-    if not _can_post(db, ch, user):
+    if not (_can_post(db, ch, user) or _invited(call, user.id)):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Join the conversation to take part in the call")
     me_in = _participant(call, user.id)
     active = [p for p in call.participants if p.left_at is None and p.user_id != user.id]
@@ -1015,18 +1050,26 @@ def join_call(call_id: int, user: CurrentUser, db: DbSession):
         call.answered_at = now
     _call_changed(db, call, ch, joined=user.id)
     db.commit()
-    return {**_call_out(call), "channel_label": _channel_label(ch)}
+    return {**_call_out(call), "channel_label": _call_label(db, call, ch, user)}
+
+
+def _lock_call(db: Session, call: ChatCall) -> None:
+    """Re-read the call under a row lock so people hanging up at the same moment see each other."""
+    db.refresh(call, with_for_update=True)
+    db.expire(call, ["participants", "invites"])
 
 
 def _leave(db: Session, call: ChatCall, ch: ChatChannel, user_id: int) -> None:
+    _lock_call(db, call)
     p = _participant(call, user_id)
     if p is None or p.left_at is not None or call.ended_at is not None:
         return
     p.left_at = utcnow()
     db.flush()
+    db.expire(call, ["participants"])  # pick up anyone else who left meanwhile
     still = [x for x in call.participants if x.left_at is None]
     # a 1:1 call ends when either side hangs up; group calls end when the last person leaves
-    one_to_one = ch.kind == "dm" and len(channel_audience(db, ch)) <= 2
+    one_to_one = ch.kind == "dm" and len(channel_audience(db, ch)) <= 2 and not call.invites
     if not still or (one_to_one and call.answered_at is not None) or (len(still) == 1 and call.answered_at is None and still[0].user_id != call.started_by):
         _end_call(db, call, ch)
     else:
@@ -1047,10 +1090,43 @@ def decline_call(call_id: int, user: CurrentUser, db: DbSession):
     if call.ended_at is None:
         active = [p.user_id for p in call.participants if p.left_at is None]
         emit(db, "call.declined", {"call_id": call.id, "user": _brief(user)}, channel_id=ch.id, user_ids=active + [user.id])
-        if ch.kind == "dm" and len(channel_audience(db, ch)) <= 2 and call.answered_at is None:
+        if ch.kind == "dm" and len(channel_audience(db, ch)) <= 2 and call.answered_at is None and not call.invites:
             _end_call(db, call, ch)
         db.commit()
     return _call_out(call)
+
+
+class InviteIn(BaseModel):
+    user_ids: list[int] = Field(min_length=1, max_length=20)
+
+
+@router.post("/calls/{call_id}/invite", summary="Add people to a call that's already going (they get rung)")
+def invite_to_call(call_id: int, payload: InviteIn, user: CurrentUser, db: DbSession):
+    call, ch = _call_or_404(db, call_id, user)
+    if call.ended_at is not None:
+        raise HTTPException(status.HTTP_410_GONE, "This call has ended")
+    me_in = _participant(call, user.id)
+    if me_in is None or me_in.left_at is not None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Join the call to add people")
+    people = _active_users(db, set(payload.user_ids) - {user.id})
+    active = {p.user_id for p in call.participants if p.left_at is None}
+    new = [u for u in people if u.id not in active]
+    if not new:
+        return {**_call_out(call), "channel_label": _call_label(db, call, ch, user)}
+    if len(active) + len(new) > settings.CHAT_MAX_CALL_PEOPLE:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Calls are limited to {settings.CHAT_MAX_CALL_PEOPLE} people")
+    now = utcnow()
+    for u in new:
+        if not _invited(call, u.id):
+            call.invites.append(ChatCallInvite(user_id=u.id, invited_by=user.id, invited_at=now))
+    db.flush()
+    for u in new:
+        emit(db, "call.ring", {"call": _call_out(call), "from": _brief(user), "channel_label": _call_label(db, call, ch, u),
+                               "channel_kind": "invite" if ch.kind == "dm" else ch.kind, "added": True},
+             channel_id=ch.id, user_ids=[u.id])
+    _call_changed(db, call, ch, invited=[u.id for u in new], by=user.id)
+    db.commit()
+    return {**_call_out(call), "channel_label": _call_label(db, call, ch, user)}
 
 
 def _relay_signal(user: User, call_id: int, to: int, data: dict) -> None:

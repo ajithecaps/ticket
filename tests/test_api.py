@@ -1436,3 +1436,36 @@ def test_chat_calls(client, admin, world):
     call = client.post(f"{C}/channels/{dm['id']}/calls", headers=asha["headers"], json={}).json()
     out = client.post(f"{C}/calls/{call['id']}/decline", headers=kiran["headers"]).json()
     assert not out["active"] and out["answered_at"] is None
+
+
+def test_add_people_to_running_call(client, admin, world):
+    asha, kiran, zed, ravi = world["asha"], world["kiran"], world["zed"], world["ravi"]
+    C = f"{API}/chat"
+    dm = client.post(f"{C}/dm", headers=asha["headers"], json={"user_ids": [kiran["id"]]}).json()
+    call = client.post(f"{C}/channels/{dm['id']}/calls", headers=asha["headers"], json={}).json()
+    client.post(f"{C}/calls/{call['id']}/join", headers=kiran["headers"])
+
+    # outsiders can't add themselves; people not in the call can't add others
+    assert client.post(f"{C}/calls/{call['id']}/invite", headers=zed["headers"], json={"user_ids": [zed["id"]]}).status_code == 404
+    with client.websocket_connect(f"{C}/ws?token={zed['headers']['Authorization'][7:]}") as ws:
+        assert ws.receive_json()["type"] == "hello"
+        out = client.post(f"{C}/calls/{call['id']}/invite", headers=asha["headers"], json={"user_ids": [zed["id"], ravi["id"]]}).json()
+        assert set(out["invited_ids"]) == {zed["id"], ravi["id"]}
+        ev = ws.receive_json()
+        while ev["type"] != "call.ring":
+            ev = ws.receive_json()
+        assert ev["added"] and ev["from"]["id"] == asha["id"] and ev["channel_label"] == "Call with Asha Dev, Kiran Dev"
+
+    # the guest can join although the DM itself stays private to them
+    joined = client.post(f"{C}/calls/{call['id']}/join", headers=zed["headers"]).json()
+    assert set(joined["participant_ids"]) == {asha["id"], kiran["id"], zed["id"]}
+    assert client.get(f"{C}/channels/{dm['id']}/messages", headers=zed["headers"]).status_code == 404
+    assert any(c["id"] == call["id"] for c in client.get(f"{C}/calls/active", headers=zed["headers"]).json())
+
+    # with guests it is a group call: one person hanging up no longer ends it
+    client.post(f"{C}/calls/{call['id']}/leave", headers=kiran["headers"])
+    left = client.get(f"{C}/calls/active", headers=asha["headers"]).json()
+    assert any(c["id"] == call["id"] and set(c["participant_ids"]) == {asha["id"], zed["id"]} for c in left)
+    for who in (asha, zed):
+        client.post(f"{C}/calls/{call['id']}/leave", headers=who["headers"])
+    assert client.post(f"{C}/calls/{call['id']}/invite", headers=asha["headers"], json={"user_ids": [ravi["id"]]}).status_code == 410

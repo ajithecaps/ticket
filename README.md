@@ -443,7 +443,11 @@ picks it); if you run the API on several hosts, set `SCHEDULER_ENABLED=false` on
 
 **Audio and video calls** - the 📞 / 🎥 buttons in any conversation ring the other person (DM) or
 everyone in the channel (group call, up to `CHAT_MAX_CALL_PEOPLE` = 8). People answer with audio or
-video, or join later from the call card in the conversation. In a call: mute (Ctrl+D), camera
+video, or join later from the call card in the conversation. **Add people** in the call window rings
+more people straight away - also people outside the conversation, so a 1:1 call can become a group
+call (they can join the call, not read the DM). **React** sends animated emoji (👍 ❤️ 😂 🎉 👏 🔥 🚀 …)
+that float up from your tile for everyone, party ones shower the whole screen, and **Raise hand**
+puts a ✋ on your tile and tells the others. In a call: mute (Ctrl+D), camera
 (Ctrl+E), screen sharing (tuned for sharp text), grid or spotlight layout (double-click a tile),
 full screen, a minimised draggable window that keeps going while you use the rest of the app, live
 speaking highlights, connection-quality bars and a settings panel for microphone, camera and speaker,

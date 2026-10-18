@@ -16,6 +16,9 @@ const QUALITY = {
   fhd: { label: "Full HD (1080p)", width: 1920, height: 1080, fps: 30, bitrate: 3_500_000 },
 };
 const AUDIO_BITRATE = 64_000;
+// In-call reactions: shown floating up from the sender's tile for everyone in the call.
+const CALL_REACTIONS = ["👍", "❤️", "😂", "🎉", "👏", "😮", "🔥", "🙌", "💯", "🚀", "😢", "🤔"];
+const SHOWER = /🎉|🔥|❤️|🚀|💯|👏/u;
 const RING_TIMEOUT_MS = 45_000;
 
 const listeners = new Set();
@@ -98,7 +101,10 @@ function onEvent(ev) {
     case "call.update":
       activeCalls.set(ev.call.channel_id, { ...(activeCalls.get(ev.call.channel_id) || {}), ...ev.call });
       changed();
-      if (state?.call.id === ev.call.id) syncParticipants(ev.call, ev);
+      if (state?.call.id === ev.call.id) {
+        (ev.invited || []).forEach((id) => { if (id !== me().id) state.pending.set(id, Date.now() + RING_TIMEOUT_MS); });
+        syncParticipants(ev.call, ev);
+      }
       if (ev.call.participant_ids.includes(me().id)) ringing.get(ev.call.id)?.close(false);
       break;
     case "call.ended":
@@ -113,7 +119,11 @@ function onEvent(ev) {
       }
       break;
     case "call.declined":
-      if (state?.call.id === ev.call_id && ev.user?.id !== me().id) toast(`${ev.user.name} declined the call`);
+      if (state?.call.id === ev.call_id && ev.user?.id !== me().id) {
+        toast(`${ev.user.name} declined the call`);
+        state.pending.delete(ev.user.id);
+        renderTiles();
+      }
       if (ev.user?.id === me().id) ringing.get(ev.call_id)?.close(false);
       break;
     case "call.signal":
@@ -130,7 +140,9 @@ function showRing(ev) {
   const { call } = ev;
   const caller = ev.from;
   const dm = ev.channel_kind === "dm";
-  const where = dm ? (call.video ? "Video call" : "Audio call") : `${call.video ? "Video" : "Audio"} call in ${ev.channel_label}`;
+  const where = ev.added
+    ? `Added you to ${call.video ? "a video" : "an audio"} call${ev.channel_kind === "invite" ? "" : ` in ${ev.channel_label}`}`
+    : dm ? (call.video ? "Video call" : "Audio call") : `${call.video ? "Video" : "Audio"} call in ${ev.channel_label}`;
   const close = (missed) => {
     sounds.stopRing();
     clearTimeout(timer);
@@ -263,6 +275,7 @@ async function enter(call, media, { label, video, outgoing = false, channelId })
     mic: true, cam: Boolean(video && media.getVideoTracks().length),
     startedAt: call.answered_at ? Date.now() : null,
     outgoing, minimized: false, layout: "grid", pinned: null, speaking: new Map(),
+    pending: new Map(), // people rung into the call who haven't answered yet: id -> give-up time
   };
   buildUi();
   watchLevel(me().id, media);
@@ -292,7 +305,10 @@ function syncParticipants(call, ev = {}) {
     clearTimeout(state.ringTimer);
   }
   if (others.length && !state.startedAt) state.startedAt = Date.now();
-  for (const id of others) if (!state.peers.has(id)) addPeer(id);
+  for (const id of others) {
+    state.pending.delete(id);
+    if (!state.peers.has(id)) addPeer(id);
+  }
   for (const [id, peer] of state.peers) {
     if (!others.includes(id)) {
       peer.close();
@@ -318,8 +334,14 @@ function signal(to, data) {
 function onSignal(from, data) {
   if (!state) return;
   if (data.state) {
+    const before = state.remoteState.get(from);
     state.remoteState.set(from, data.state);
+    if (data.state.hand && !before?.hand) { toast(`✋ ${userName(from)} raised a hand`); sounds.join(); }
     renderTiles();
+    return;
+  }
+  if (data.reaction) {
+    if (CALL_REACTIONS.includes(data.reaction)) showReaction(from, data.reaction);
     return;
   }
   const peer = state.peers.get(from) || addPeer(from);
@@ -445,7 +467,7 @@ function currentVideoTrack() {
 
 function sendState() {
   if (!state) return;
-  const data = { state: { mic: state.mic, cam: state.cam, screen: Boolean(state.screen) } };
+  const data = { state: { mic: state.mic, cam: state.cam, screen: Boolean(state.screen), hand: Boolean(state.hand) } };
   for (const id of state.peers.keys()) signal(id, data);
 }
 
@@ -644,7 +666,10 @@ function buildUi() {
   };
   document.addEventListener("keydown", onKey);
   state.ui = { root, head, stage, controls, onKey, videos: new Map() };
-  state.clock = setInterval(renderHead, 1000);
+  state.clock = setInterval(() => {
+    renderHead();
+    if ([...state.pending.values()].some((t) => t < Date.now())) renderTiles();
+  }, 1000);
   makeDraggable(root, head);
   renderHead();
   renderControls();
@@ -723,6 +748,9 @@ function renderControls() {
     ctl(state.mic ? "mic" : "mic-off", state.mic ? "Mute (Ctrl+D)" : "Unmute (Ctrl+D)", toggleMic, { on: state.mic }),
     ctl(state.cam ? "video" : "video-off", state.cam ? "Stop video (Ctrl+E)" : "Start video (Ctrl+E)", toggleCam, { on: state.cam }),
     mini ? null : ctl("screen-share", state.screen ? "Stop sharing" : "Share screen", toggleScreen, { on: !state.screen, cls: state.screen ? "sharing" : "" }),
+    ctl("smile", "React", (e) => reactMenu(e.currentTarget)),
+    mini ? null : ctl("hand", state.hand ? "Lower hand" : "Raise hand", toggleHand, { on: !state.hand, cls: state.hand ? "hand-up" : "" }),
+    mini ? null : ctl("user-plus", "Add people", (e) => addPeopleMenu(e.currentTarget)),
     mini ? null : ctl("grid", state.layout === "grid" ? "Spotlight" : "Grid", () => { state.layout = state.layout === "grid" ? "spotlight" : "grid"; renderControls(); renderTiles(); }),
     mini ? null : ctl("settings", "Settings", (e) => settingsMenu(e.currentTarget)),
     mini ? null : ctl("maximize", document.fullscreenElement ? "Exit full screen" : "Full screen", toggleFullscreen),
@@ -737,7 +765,7 @@ function toggleFullscreen() {
 
 function tileFor(id, stream, { local = false } = {}) {
   const ui = state.ui;
-  const rs = local ? { mic: state.mic, cam: state.cam, screen: Boolean(state.screen) } : state.remoteState.get(id) || {};
+  const rs = local ? { mic: state.mic, cam: state.cam, screen: Boolean(state.screen), hand: Boolean(state.hand) } : state.remoteState.get(id) || {};
   const videoTrack = stream?.getVideoTracks().find((t) => t.readyState === "live" && !t.muted);
   const showVideo = Boolean(videoTrack) && (local ? (state.cam || state.screen) : rs.cam !== false || rs.screen);
   let video = ui.videos.get(id);
@@ -763,6 +791,7 @@ function tileFor(id, stream, { local = false } = {}) {
   showVideo ? null : h("div.call-tile-avatar", avatar(u, "lg"), h("span.call-ring-level")),
   h("div.call-tile-name", rs.mic === false ? icon("mic-off", { size: 13, cls: "muted-ic" }) : null,
     h("span", local ? `${u.name} (you)` : u.name), rs.screen ? h("span.tile-tag", "Screen") : null),
+  rs.hand ? h("div.call-hand", { title: "Hand raised" }, "✋") : null,
   !local && conn && conn !== "connected" ? h("div.call-tile-state", conn === "failed" ? "Reconnecting…" : "Connecting…") : null);
   if (!showVideo) video.classList.add("hidden-video"); else video.classList.remove("hidden-video");
   return tile;
@@ -777,10 +806,18 @@ function renderTiles() {
   const localStream = state.screen ? state.screenView : state.local;
   if (state.ui.localStreamKey !== (state.screen ? "screen" : "cam")) { state.ui.videos.delete(me().id); state.ui.localStreamKey = state.screen ? "screen" : "cam"; }
   const self = tileFor(me().id, localStream, { local: true });
+  const now = Date.now();
+  for (const [id, until] of state.pending) {
+    if (until < now) { state.pending.delete(id); toast(`${userName(id)} didn't answer`); }
+  }
+  const ringingTiles = [...state.pending.keys()].map((id) => h("div.call-tile.ringing", { dataset: { id } },
+    h("div.call-tile-avatar", avatar(userObj(id), "lg"), h("span.ring-wave"), h("span.ring-wave.w2")),
+    h("div.call-tile-name", h("span", userObj(id).name)),
+    h("div.call-tile-state", "Ringing…")));
   const stage = state.ui.stage;
-  const count = tiles.length + 1;
+  const count = tiles.length + 1 + (state.minimized ? 0 : ringingTiles.length);
   stage.className = `call-stage layout-${state.minimized ? "mini" : state.layout} n${Math.min(count, 9)}`;
-  if (!tiles.length) {
+  if (!tiles.length && !ringingTiles.length) {
     clear(stage, self, h("div.call-waiting", state.outgoing ? h("span", "Calling ", h("strong", state.label), "…") : h("span", "Waiting for others to join…")));
     return;
   }
@@ -791,11 +828,121 @@ function renderTiles() {
   if (state.layout === "spotlight") {
     const pinnedId = state.pinned ?? [...state.peers.keys()][0];
     const all = [...tiles, self];
-    const main = all.find((t) => Number(t.dataset.id) === pinnedId) || tiles[0];
-    clear(stage, h("div.call-main", main), h("div.call-strip", all.filter((t) => t !== main)));
+    const main = all.find((t) => Number(t.dataset.id) === pinnedId) || tiles[0] || self;
+    clear(stage, h("div.call-main", main), h("div.call-strip", all.filter((t) => t !== main), ringingTiles));
     return;
   }
-  clear(stage, tiles, self);
+  clear(stage, tiles, self, ringingTiles);
+}
+
+function toggleHand() {
+  state.hand = !state.hand;
+  sendState();
+  renderControls();
+  renderTiles();
+}
+
+function reactMenu(anchor) {
+  const old = state.ui.root.querySelector(".call-react-bar");
+  if (old) { old.remove(); return; }
+  const bar = h("div.call-react-bar", { role: "toolbar", "aria-label": "Send a reaction" },
+    CALL_REACTIONS.map((e) => h("button.call-react", { type: "button", title: `Send ${e}`, onclick: () => sendReaction(e) }, e)));
+  state.ui.root.append(bar);
+  const r = anchor.getBoundingClientRect();
+  const root = state.ui.root.getBoundingClientRect();
+  const left = Math.max(8, Math.min(r.left - root.left + r.width / 2 - bar.offsetWidth / 2, root.width - bar.offsetWidth - 8));
+  bar.style.left = `${left}px`;
+  bar.style.bottom = `${root.bottom - r.top + 10}px`;
+  const close = (ev) => { if (!bar.contains(ev.target) && !anchor.contains(ev.target)) { bar.remove(); document.removeEventListener("pointerdown", close, true); } };
+  setTimeout(() => document.addEventListener("pointerdown", close, true), 0);
+}
+
+let lastReaction = 0;
+function sendReaction(e) {
+  const now = Date.now();
+  if (now - lastReaction < 350) return; // a little rate limit so nobody floods the call
+  lastReaction = now;
+  showReaction(me().id, e);
+  for (const id of state.peers.keys()) signal(id, { reaction: e });
+}
+
+/** Float the emoji up from the sender's tile (big, wobbling) and shower the call for party ones. */
+function showReaction(uid, e) {
+  if (!state?.ui) return;
+  const root = state.ui.root;
+  const box = root.getBoundingClientRect();
+  const tile = root.querySelector(`.call-tile[data-id="${uid}"]`);
+  const t = tile ? tile.getBoundingClientRect() : { left: box.left + box.width / 2 - 40, width: 80, bottom: box.bottom - 120 };
+  const motion = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const fx = h("div.call-fx", {
+    style: { left: `${t.left - box.left + t.width / 2 + (Math.random() - 0.5) * Math.min(120, t.width / 2)}px`, top: `${t.bottom - box.top - 70}px`, "--sway": `${(Math.random() - 0.5) * 60}px` },
+  }, h("span.call-fx-e", e), h("span.call-fx-name", uid === me().id ? "You" : userName(uid).split(" ")[0]));
+  root.append(fx);
+  setTimeout(() => fx.remove(), 3200);
+  if (motion && SHOWER.test(e) && prefs.get("effects") !== false) {
+    const layer = h("div.call-shower");
+    for (let i = 0; i < 18; i++) {
+      layer.append(h("span", {
+        style: { left: `${Math.random() * 96}%`, fontSize: `${20 + Math.random() * 26}px`, "--d": `${1.8 + Math.random() * 1.4}s`, "--delay": `${Math.random() * 0.5}s`, "--x": `${(Math.random() - 0.5) * 140}px`, "--r": `${(Math.random() - 0.5) * 500}deg` },
+      }, e));
+    }
+    state.ui.stage.append(layer);
+    setTimeout(() => layer.remove(), 3800);
+  }
+  if (uid !== me().id) sounds.message(true);
+}
+
+function addPeopleMenu(anchor) {
+  document.querySelector(".call-settings")?.remove();
+  const inCall = new Set([me().id, ...state.call.participant_ids, ...state.pending.keys()]);
+  const chosen = new Set();
+  const search = h("input.call-search", { type: "search", placeholder: "Search people…", "aria-label": "Search people" });
+  const list = h("ul.call-people-list", { role: "listbox" });
+  const ring = h("button.call-ring-btn", { type: "button", disabled: true }, icon("phone", { size: 15 }), h("span", "Ring"));
+  const max = rtcConfig?.maxPeople || 8;
+  const paint = () => {
+    const q = search.value.trim().toLowerCase();
+    const people = [...users().values()].filter((u) => !inCall.has(u.id) && (!q || u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)));
+    clear(list, people.slice(0, 60).map((u) => h(`li${chosen.has(u.id) ? ".on" : ""}`, {
+      role: "option", "aria-selected": String(chosen.has(u.id)),
+      onclick: () => {
+        if (chosen.has(u.id)) chosen.delete(u.id);
+        else if (state.call.participant_ids.length + state.pending.size + chosen.size >= max) { toast(`Calls are limited to ${max} people`, "error"); return; }
+        else chosen.add(u.id);
+        paint();
+      },
+    }, avatar(u, "sm"), h("span.cp-name", u.name, h("span", u.designation || u.email)),
+    u.online ? h("span.cp-online", "Online") : null, h("span.cp-check", icon("check", { size: 12 })))),
+    people.length ? null : h("li.cp-none", q ? "No one found" : "Everyone is already in the call"));
+    ring.disabled = !chosen.size;
+    ring.querySelector("span").textContent = chosen.size ? `Ring ${chosen.size} ${chosen.size === 1 ? "person" : "people"}` : "Ring";
+  };
+  search.addEventListener("input", paint);
+  ring.addEventListener("click", async () => {
+    ring.disabled = true;
+    try {
+      const ids = [...chosen];
+      const call = await api.post(`/chat/calls/${state.call.id}/invite`, { user_ids: ids });
+      ids.forEach((id) => state.pending.set(id, Date.now() + RING_TIMEOUT_MS));
+      panel.remove();
+      syncParticipants(call);
+      toast(`Ringing ${ids.map((id) => userObj(id).name.split(" ")[0]).join(", ")}…`);
+    } catch (err) {
+      toast(err.message, "error");
+      ring.disabled = false;
+    }
+  });
+  const panel = h("div.call-settings.call-add",
+    h("div.call-set-head", h("strong", "Add people to the call"), h("button.icon-btn.sm", { type: "button", "aria-label": "Close", onclick: () => panel.remove() }, icon("x", { size: 14 }))),
+    h("p.muted.small.call-set-tip", "They'll get a ring right away - even if they're not in this conversation."),
+    search, list, ring);
+  state.ui.root.append(panel);
+  const r = anchor.getBoundingClientRect();
+  const root = state.ui.root.getBoundingClientRect();
+  panel.style.left = `${Math.max(8, Math.min(r.left - root.left - 140, root.width - 330))}px`;
+  panel.style.bottom = `${root.bottom - r.top + 8}px`;
+  paint();
+  setTimeout(() => search.focus(), 0);
 }
 
 async function settingsMenu(anchor) {

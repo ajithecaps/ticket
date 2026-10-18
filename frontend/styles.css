@@ -2346,3 +2346,42 @@ body.chat-page { overflow: hidden; }
 }
 .call-tile-avatar .avatar.lg, .ring-avatar .avatar.lg { border-radius: 50%; display: grid; place-items: center; line-height: 1; background: hsl(var(--hue) 45% 42%); color: #fff; font-weight: 700; }
 .chat.has-panel .chat-main .cc-hint { display: none; }
+
+/* ---- add people to a running call */
+.call-add { max-height: min(460px, 70vh); }
+.call-search { background: #11141d !important; color: #fff !important; border: 1px solid rgba(255, 255, 255, .15) !important; border-radius: 8px; height: 34px; padding: 0 10px; }
+.call-people-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; min-height: 60px; max-height: 260px; display: flex; flex-direction: column; gap: 2px; }
+.call-people-list li { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 8px; cursor: pointer; }
+.call-people-list li:hover { background: rgba(255, 255, 255, .07); }
+.call-people-list li.on { background: rgba(129, 136, 248, .2); }
+.cp-name { display: flex; flex-direction: column; flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; }
+.cp-name span { font-size: 11.5px; font-weight: 400; color: rgba(255, 255, 255, .55); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-online { font-size: 11px; color: #47cd89; }
+.cp-check { width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid rgba(255, 255, 255, .3); display: grid; place-items: center; color: transparent; flex: none; }
+.call-people-list li.on .cp-check { background: #8188f8; border-color: #8188f8; color: #fff; }
+.cp-none { color: rgba(255, 255, 255, .5); cursor: default !important; font-size: 13px; }
+.call-ring-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 38px; border: 0; border-radius: 10px; background: #12b76a; color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+.call-ring-btn:disabled { background: rgba(255, 255, 255, .12); color: rgba(255, 255, 255, .45); cursor: default; }
+.call-tile.ringing { opacity: .85; }
+.call-tile.ringing .call-tile-avatar { width: 96px; height: 96px; }
+.call-tile.ringing .ring-wave { border-color: rgba(71, 205, 137, .55); }
+.call-tile.ringing .call-tile-state { animation: live-pulse 1.6s ease-in-out infinite; }
+
+/* ---- in-call reactions and raised hands */
+.call-react-bar { position: absolute; z-index: 6; display: flex; gap: 2px; padding: 6px; border-radius: 999px; background: #1b1f2c; border: 1px solid rgba(255, 255, 255, .1); box-shadow: 0 16px 40px rgba(0, 0, 0, .5); animation: pop-in .15s ease-out; max-width: calc(100% - 16px); overflow-x: auto; }
+.call-react { width: 42px; height: 42px; border: 0; border-radius: 50%; background: none; font-size: 24px; cursor: pointer; transition: transform .12s, background .12s; flex: none; }
+.call-react:hover { background: rgba(255, 255, 255, .1); transform: scale(1.25) translateY(-3px); }
+.call-react:active { transform: scale(.9); }
+.call-fx { position: absolute; z-index: 8; pointer-events: none; display: flex; flex-direction: column; align-items: center; gap: 4px; transform: translateX(-50%); animation: call-fx-rise 3s cubic-bezier(.2, .7, .3, 1) forwards; }
+.call-fx-e { font-size: 56px; line-height: 1; filter: drop-shadow(0 6px 14px rgba(0, 0, 0, .45)); animation: call-fx-wobble .6s ease-in-out infinite alternate; }
+.call-fx-name { padding: 2px 8px; border-radius: 999px; background: rgba(0, 0, 0, .6); color: #fff; font-size: 11px; font-weight: 700; }
+@keyframes call-fx-rise { 0% { opacity: 0; transform: translate(-50%, 20px) scale(.4); } 12% { opacity: 1; transform: translate(-50%, 0) scale(1.15); } 20% { transform: translate(-50%, -10px) scale(1); } 100% { opacity: 0; transform: translate(calc(-50% + var(--sway)), -260px) scale(.9); } }
+@keyframes call-fx-wobble { from { transform: rotate(-12deg); } to { transform: rotate(12deg); } }
+.call-shower { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 7; }
+.call-stage { position: relative; }
+.call-shower span { position: absolute; bottom: -50px; line-height: 1; animation: fx-rise var(--d) cubic-bezier(.2, .6, .4, 1) var(--delay) both; }
+.call-hand { position: absolute; top: 10px; right: 10px; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; background: #fdb022; font-size: 20px; box-shadow: 0 4px 12px rgba(0, 0, 0, .35); animation: hand-wave 1.2s ease-in-out infinite; transform-origin: 70% 90%; }
+@keyframes hand-wave { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(14deg); } 75% { transform: rotate(-10deg); } }
+.call-ctl.hand-up > svg { background: #fdb022; color: #111; }
+.call-ui.mini .call-react { width: 34px; height: 34px; font-size: 19px; }
+@media (prefers-reduced-motion: reduce) { .call-fx, .call-fx-e, .call-hand { animation: none; } }
