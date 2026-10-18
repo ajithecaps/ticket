@@ -86,7 +86,9 @@ class TicketFilters:
         in_release: Annotated[
             bool | None, Query(description="false: hide tickets moved into a release (the board does this)")
         ] = None,
-        sort: Literal["created_at", "updated_at", "due_date", "priority"] = "created_at",
+        sort: Literal[
+            "created_at", "updated_at", "due_date", "start_date", "priority", "status", "title", "key", "assignee"
+        ] = "created_at",
         order: Literal["asc", "desc"] = "desc",
         limit: Annotated[int, Query(ge=1, le=200)] = 20,
         offset: Annotated[int, Query(ge=0)] = 0,
@@ -182,6 +184,19 @@ def _apply_filters(stmt, f: TicketFilters):
     elif f.sort == "due_date":
         # tickets without a due date always go last
         stmt = stmt.order_by(case((Ticket.due_date.is_(None), 1), else_=0), direction(Ticket.due_date))
+    elif f.sort == "start_date":
+        stmt = stmt.order_by(case((Ticket.start_date.is_(None), 1), else_=0), direction(Ticket.start_date))
+    elif f.sort == "status":
+        rank = case(*[(Ticket.status == s, i) for i, s in enumerate(TicketStatus)], else_=99)
+        stmt = stmt.order_by(direction(rank))
+    elif f.sort == "title":
+        stmt = stmt.order_by(direction(func.lower(Ticket.title)))
+    elif f.sort == "key":
+        stmt = stmt.order_by(direction(Ticket.project_id), direction(Ticket.number))
+    elif f.sort == "assignee":
+        # unassigned last; by name otherwise
+        name = select(User.name).where(User.id == Ticket.assignee_id).correlate(Ticket).scalar_subquery()
+        stmt = stmt.order_by(case((Ticket.assignee_id.is_(None), 1), else_=0), direction(func.lower(name)))
     elif f.sort == "updated_at":
         stmt = stmt.order_by(direction(Ticket.updated_at))
     else:

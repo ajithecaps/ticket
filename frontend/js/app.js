@@ -1,5 +1,6 @@
 import { api, auth, setUnauthorizedHandler } from "./api.js";
 import { setProjectKeys } from "./markdown.js";
+import { getTheme, onThemeChange, setTheme } from "./theme.js";
 import { avatar, busy, clear, errorBox, field, h, label, modal, spinner, toast } from "./ui.js";
 import { renderDashboard } from "./views/dashboard.js";
 import { renderTickets } from "./views/tickets.js";
@@ -155,6 +156,7 @@ function renderShell() {
         h("header.topbar",
           h("button.icon-btn.menu-btn", { "aria-label": "Menu", onclick: () => document.body.classList.toggle("nav-open") }, "☰"),
           h("div.search", search),
+          themeButton(),
           bell.el,
           userMenu(),
         ),
@@ -165,10 +167,33 @@ function renderShell() {
   );
 }
 
+const THEME_CYCLE = { system: "light", light: "dark", dark: "system" };
+const THEME_ICON = { system: "🖥", light: "☀️", dark: "🌙" };
+function themeButton() {
+  const btn = h("button.icon-btn.theme-btn", { type: "button", onclick: () => setTheme(THEME_CYCLE[getTheme()]) });
+  const sync = () => {
+    const t = getTheme();
+    btn.textContent = THEME_ICON[t];
+    btn.title = `Theme: ${t} (click for ${THEME_CYCLE[t]})`;
+    btn.setAttribute("aria-label", btn.title);
+    document.querySelectorAll(".menu-theme .chip").forEach((c) => c.setAttribute("aria-pressed", String(c.dataset.theme === t)));
+  };
+  sync();
+  onThemeChange(sync);
+  return btn;
+}
+// Redraw the current page so charts, diagrams and code colours follow the new theme.
+onThemeChange(() => { if (auth.user && document.getElementById("main")) route(); });
+
 function userMenu() {
   const u = auth.user;
   const menu = h("div.menu",
     h("div.menu-head", h("strong", u.name), h("span.muted.small", u.email), u.designation && h("span.muted.small", u.designation)),
+    h("div.menu-theme", h("span.muted.small", "Theme"),
+      h("div.chips.seg", [["system", "System"], ["light", "Light"], ["dark", "Dark"]].map(([v, text]) => h("button.chip", {
+        type: "button", "aria-pressed": String(getTheme() === v), dataset: { theme: v },
+        onclick: (e) => { setTheme(v); e.currentTarget.parentElement.querySelectorAll(".chip").forEach((c) => c.setAttribute("aria-pressed", String(c === e.currentTarget))); },
+      }, text)))),
     h("button", { onclick: () => { close(); changePassword(); } }, "Change password"),
     h("button", { onclick: logout }, "Log out"),
   );

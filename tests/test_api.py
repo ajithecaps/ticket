@@ -1115,3 +1115,17 @@ def test_dashboard(client, admin, world):
     assert client.get(f"{API}/dashboard", headers=zed["headers"], params={"project_id": pay["id"]}).status_code == 404
     empty = client.get(f"{API}/dashboard", headers=zed["headers"]).json()
     assert empty["kpis"]["open"] == 0 and empty["workload"][0]["user"]["id"] == zed["id"]
+
+
+def test_ticket_sorting_options(client, world):
+    ravi, pay = world["ravi"], world["pay"]
+    for sort in ("title", "status", "key", "assignee", "start_date", "priority", "due_date", "updated_at"):
+        for order in ("asc", "desc"):
+            r = client.get(f"{API}/projects/{pay['id']}/tickets", headers=ravi["headers"], params={"sort": sort, "order": order, "limit": 50})
+            assert r.status_code == 200, (sort, r.text)
+    titles = [t["title"].lower() for t in client.get(f"{API}/projects/{pay['id']}/tickets", headers=ravi["headers"],
+                                                      params={"sort": "title", "order": "asc", "limit": 200}).json()["items"]]
+    assert titles == sorted(titles)
+    rows = client.get(f"{API}/projects/{pay['id']}/tickets", headers=ravi["headers"], params={"sort": "assignee", "order": "asc", "limit": 200}).json()["items"]
+    names = [t["assignee"]["name"].lower() for t in rows if t["assignee"]]
+    assert names == sorted(names) and all(t["assignee"] is None for t in rows[len(names):])

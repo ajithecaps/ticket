@@ -266,6 +266,21 @@ acceptance criteria (a checklist with a progress meter), reference links and doc
   `POST /upcoming/{id}/documents` · `GET /upcoming-documents/{id}/download` ·
   `DELETE /upcoming-documents/{id}` · `POST /upcoming/{id}/convert`
 
+## Ticket list and themes
+
+The Tickets page and each project's **List** tab share one table: filters bound to the URL (search,
+priority, type, assignee, status chips, overdue, show released), **sortable column headers** (key, title,
+status, priority, assignee, start, due, created, updated), a **column picker** (project, type, reporter,
+start, time logged vs estimate, release, created…), comfortable/compact density, 25/50/100 rows,
+**group by** status / priority / assignee / project / type, **row selection with bulk actions** (status,
+priority, assignee, delete - each ticket keeps its normal permission checks), click a status badge to
+change it in place, **saved views** and **CSV export** of everything that matches. Layout and saved views
+are remembered per browser. API sort keys: `created_at, updated_at, due_date, start_date, priority,
+status, title, key, assignee` with `order=asc|desc`.
+
+**Theme:** the ☀️ / 🌙 / 🖥 button in the top bar (or the account menu) switches Light / Dark / System;
+the choice is stored per browser and applied before the page paints.
+
 ## Documentation
 
 Every project has **Docs**: Markdown pages that nest into a tree (sidebar **Docs**, or the project's
