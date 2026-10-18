@@ -5,6 +5,8 @@ import { api, auth, request } from "../api.js";
 import { icon } from "../icons.js";
 import { realtime } from "../realtime.js";
 import { EMOJI, QUICK_REACTIONS, recentEmoji, rememberEmoji, searchEmoji } from "../emoji.js";
+import { activeCalls, callsSupported, currentCall, fmtDuration, initCalls, join as joinCall, onCallsChange, startCall, stopCalls } from "../calls.js";
+import { prefs, sounds } from "../sounds.js";
 import {
   avatar, busy, clear, confirmDialog, copyText, emptyState, errorBox, field, fmtBytes, h, modal, parseDate,
   renderMarkdown, spinner, timeAgo, toast,
@@ -106,10 +108,21 @@ function plainText(md) {
     .trim();
 }
 
+function playFor(m) {
+  const ch = shared.channels.get(m.channel_id);
+  const loud = !ch || ch.kind === "dm" || mentionsMe(m.body);
+  if (ch?.muted && !mentionsMe(m.body)) return;
+  if (m.parent_id && !loud) return;
+  const here = !document.hidden && shared.viewing === m.channel_id;
+  if (loud && !here) sounds.mention();
+  else sounds.message(here);
+}
+
 /** Called once the app shell exists: connect the socket, keep the badge fresh, notify. */
 export function startChat() {
   stopChat();
   realtime.start();
+  initCalls(() => shared.users);
   loadUsers(true).catch(() => {});
   refreshBadge();
   shared.unsub = realtime.on((ev) => {
@@ -119,6 +132,8 @@ export function startChat() {
         loadUsers(true).then(() => view?.onPresence()).catch(() => {});
         break;
       case "message.new":
+        if (ev.message.call) { refreshBadgeSoon(400); break; }
+        if (ev.message.user?.id !== me()?.id) playFor(ev.message);
         if (ev.message.user?.id !== me()?.id && !ev.message.parent_id) desktopNotify(ev.message);
         else if (ev.message.parent_id && ev.message.user?.id !== me()?.id && mentionsMe(ev.message.body)) desktopNotify(ev.message);
         if (!shared.channels.has(ev.channel_id)) refreshBadgeSoon();
@@ -141,6 +156,7 @@ export function startChat() {
 export function stopChat() {
   shared.unsub?.();
   shared.unsub = null;
+  stopCalls();
   realtime.stop();
   shared.channels.clear();
   shared.usersLoaded = null;
@@ -248,8 +264,154 @@ function renderBody(text) {
   }
   // emoji-only messages are shown large
   const plain = (text || "").trim();
-  if (plain && plain.length <= 24 && /^(\p{Extended_Pictographic}|\p{Emoji_Component}|‍|️|\s)+$/u.test(plain)) el.classList.add("jumbo");
+  if (isEmojiOnly(plain)) {
+    el.classList.add("jumbo");
+    el.replaceChildren(...graphemes(plain).filter((g) => g.trim()).map((g, i) => h("span.jumbo-e", { dataset: { fx: fxFor(g) }, style: { "--i": i } }, g)));
+  }
+  collapseLongCode(el);
   return el;
+}
+
+const isEmojiOnly = (t) => Boolean(t) && t.length <= 24 && /^(\p{Extended_Pictographic}|\p{Emoji_Component}|‍|️|\s)+$/u.test(t) && /\p{Extended_Pictographic}/u.test(t);
+
+function graphemes(text) {
+  if (window.Intl?.Segmenter) return [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text)].map((x) => x.segment);
+  return [...text];
+}
+
+// Which little animation each emoji gets when it is sent on its own (big).
+const FX = [
+  [/😂|🤣|😆|😹|😅/u, "laugh"], [/❤️|💖|💗|💓|💕|🧡|💛|💚|💙|💜|🖤|🤍|😍|🥰|😘|🫶/u, "beat"],
+  [/👍|👏|🙌|💪|✅|💯|🆗|👌|🤝/u, "pop"], [/🎉|🥳|🎊|🎈|🎂|🍾|🎁/u, "party"], [/🔥|⚡|💥/u, "flicker"],
+  [/🚀|✈️/u, "launch"], [/👋|🤚|✋|🖐️/u, "wave"], [/😭|😢|🥺|😿/u, "sob"], [/😱|🤯|😮|😲|😳/u, "shock"],
+  [/🤔|🧐|🤨/u, "think"], [/😎|🤩|✨|⭐|🌟|💫/u, "shine"], [/💩|🤡|👻|🙈|🤪|😜/u, "wobble"], [/😴|😪|🥱/u, "sleep"],
+  [/😡|😠|🤬|😤/u, "rage"], [/🐛|🐞/u, "crawl"],
+];
+const fxFor = (e) => FX.find(([re]) => re.test(e))?.[1] || "bounce";
+
+// Emoji that set off a burst across the conversation when they arrive live.
+const BURST = /🎉|🥳|🎊|🚀|❤️|😂|🤣|🔥|👏|🎂|💯|✨|😍|🙌|🍾|🎈|💖|👍/u;
+
+/** A shower of emoji over the conversation (respects reduced motion and the viewer's setting). */
+function emojiBurst(container, emoji, { count = 22 } = {}) {
+  if (!container || !prefs.get("effects") || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const fall = /🎉|🎊|🥳|🎈|✨/u.test(emoji);
+  const fly = /🚀/u.test(emoji);
+  const layer = h(`div.fx-layer.${fall ? "fall" : fly ? "fly" : "rise"}`);
+  for (let i = 0; i < count; i++) {
+    const size = 18 + Math.random() * 26;
+    layer.append(h("span.fx-p", {
+      style: {
+        left: `${Math.random() * 96}%`, fontSize: `${size}px`,
+        "--d": `${1.6 + Math.random() * 1.6}s`, "--delay": `${Math.random() * 0.6}s`,
+        "--x": `${(Math.random() - 0.5) * 160}px`, "--r": `${(Math.random() - 0.5) * 540}deg`,
+      },
+    }, emoji));
+  }
+  container.append(layer);
+  setTimeout(() => layer.remove(), 4200);
+}
+
+function reactionPop(chip, emoji) {
+  if (!chip || !prefs.get("effects") || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  chip.classList.remove("bump");
+  void chip.offsetWidth;
+  chip.classList.add("bump");
+  const r = chip.getBoundingClientRect();
+  for (let i = 0; i < 6; i++) {
+    const p = h("span.fx-mini", { style: { left: `${r.left + r.width / 2}px`, top: `${r.top}px`, "--x": `${(Math.random() - 0.5) * 90}px`, "--y": `${-40 - Math.random() * 50}px`, "--r": `${(Math.random() - 0.5) * 300}deg` } }, emoji);
+    document.body.append(p);
+    setTimeout(() => p.remove(), 900);
+  }
+}
+
+/** Long code blocks start folded with a "Show all" toggle. */
+function collapseLongCode(el) {
+  el.querySelectorAll(".md-codeblock").forEach((block) => {
+    const lines = (block.querySelector("code")?.textContent || "").split("\n").length;
+    if (lines <= 18) return;
+    block.classList.add("folded");
+    const btn = h("button.code-more", {
+      type: "button",
+      onclick: () => {
+        const folded = block.classList.toggle("folded");
+        btn.textContent = folded ? `Show all ${lines} lines` : "Show less";
+      },
+    }, `Show all ${lines} lines`);
+    block.append(btn);
+  });
+}
+
+// ---------------------------------------------------------------------------- code snippets
+const SNIPPET_LANGS = ["", "javascript", "typescript", "python", "java", "go", "rust", "php", "ruby", "csharp", "cpp", "c", "kotlin", "swift",
+  "sql", "bash", "json", "yaml", "html", "css", "xml", "markdown", "dockerfile", "diff"];
+
+function guessLang(code) {
+  const t = code.trim();
+  if (/^[[{]/.test(t)) { try { JSON.parse(t); return "json"; } catch { /* not JSON */ } }
+  if (/^\s*(select|insert|update|delete|create|alter|with)\b/i.test(t)) return "sql";
+  if (/^\s*(def |class \w+.*:|import \w+$|from \w[\w.]* import)/m.test(t)) return "python";
+  if (/^\s*<(!doctype|html|div|span|template|\w+[ >])/i.test(t)) return "html";
+  if (/^\s*(\$ |sudo |npm |pip |git |cd |docker |curl |export )/m.test(t)) return "bash";
+  if (/^\s*(package |func |import \()/m.test(t)) return "go";
+  if (/^\s*(public |private |protected )?(static )?(class|interface|void) /m.test(t)) return "java";
+  if (/\b(const|let|function|console\.\w+|import .* from)\b|=>/.test(t)) return /:\s*(string|number|boolean)\b|interface /.test(t) ? "typescript" : "javascript";
+  if (/^[\w-]+:\s/m.test(t) && !/[;{}]/.test(t)) return "yaml";
+  if (/^\s*[.#]?[\w-]+\s*\{[^}]*:[^}]*\}/m.test(t)) return "css";
+  return "";
+}
+
+function looksLikeCode(text) {
+  if (text.split("\n").length < 3) return false;
+  return /[{};]\s*$/m.test(text) || /^( {2,}|\t)\S/m.test(text)
+    || /\b(function|const|let|var|def|class|import|return|public|private|SELECT|FROM|WHERE|#include|echo|fn|func)\b/.test(text) || /^\s*<\/?\w+/m.test(text);
+}
+
+function fence(code, lang) {
+  const ticks = code.includes("```") ? "````" : "```";
+  return `${ticks}${lang}\n${code.replace(/\s+$/, "")}\n${ticks}`;
+}
+
+function snippetDialog(onSend, initial = "") {
+  const code = h("textarea.snippet-code", { rows: 14, spellcheck: false, placeholder: "Paste or write code…", "aria-label": "Code" });
+  code.value = initial;
+  const lang = h("select", { "aria-label": "Language" }, SNIPPET_LANGS.map((l) => h("option", { value: l }, l || "Auto / plain text")));
+  const title = h("input", { placeholder: "Optional note, e.g. 'fix for PAY-12'", maxLength: 200 });
+  const lines = h("span.muted.small");
+  const sync = () => {
+    const n = code.value ? code.value.split("\n").length : 0;
+    lines.textContent = `${n} line${n === 1 ? "" : "s"}`;
+    if (!lang.dataset.touched) lang.value = guessLang(code.value);
+  };
+  lang.addEventListener("change", () => { lang.dataset.touched = "1"; });
+  code.addEventListener("input", sync);
+  const send = h("button.btn.primary", { type: "submit" }, icon("send", { size: 14 }), "Send snippet");
+  const form = h("form.form.snippet-form",
+    h("div.snippet-bar", lang, lines, h("span.muted.small.snippet-hint", h("kbd", "Tab"), " indents · ", h("kbd", "Ctrl"), "+", h("kbd", "Enter"), " sends")),
+    code, field("Note", title), h("div.form-actions", send));
+  code.addEventListener("keydown", (e) => {
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const { selectionStart: a, selectionEnd: b, value } = code;
+      if (a === b && !e.shiftKey) code.setRangeText("  ", a, b, "end");
+      else {
+        const start = value.lastIndexOf("\n", a - 1) + 1;
+        const block = value.slice(start, b);
+        const out = e.shiftKey ? block.replace(/^ {1,2}/gm, "") : block.replace(/^/gm, "  ");
+        code.setRangeText(out, start, b, "select");
+      }
+      sync();
+    }
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); form.requestSubmit(); }
+  });
+  const m = modal("Code snippet", form, { wide: true });
+  setTimeout(() => { sync(); code.focus(); }, 0);
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (!code.value.trim()) { toast("Write or paste some code first", "error"); return; }
+    const body = [title.value.trim(), fence(code.value, lang.value)].filter(Boolean).join("\n");
+    busy(send, async () => { await onSend(body, []); m.close(); });
+  });
 }
 
 function mentionPill(u) {
@@ -332,13 +494,13 @@ function menu(anchor, items) {
  */
 function composer({ channelId, parentId = null, placeholder, onSend, onEditLast, candidates }) {
   const key = `${channelId}:${parentId || ""}`;
-  const ta = h("textarea.composer-input", { rows: 1, placeholder, "aria-label": placeholder, maxLength: 10000 });
+  const ta = h("textarea.cc-input", { rows: 1, placeholder, "aria-label": placeholder, maxLength: 10000 });
   ta.value = view?.drafts.get(key) || "";
   let files = [];
-  const filesRow = h("div.composer-files");
-  const sendBtn = h("button.composer-send", { type: "button", title: "Send (Enter)", "aria-label": "Send" }, icon("send", { size: 16 }));
+  const filesRow = h("div.cc-files");
+  const sendBtn = h("button.cc-send", { type: "button", title: "Send (Enter)", "aria-label": "Send" }, icon("send", { size: 16 }));
   const fileInput = h("input", { type: "file", multiple: true, hidden: true, onchange: () => { addFiles(fileInput.files); fileInput.value = ""; } });
-  const ac = h("ul.composer-ac", { role: "listbox", hidden: true });
+  const ac = h("ul.cc-ac", { role: "listbox", hidden: true });
   let acItems = [];
   let acIndex = 0;
   let acRange = null;
@@ -439,6 +601,7 @@ function composer({ channelId, parentId = null, placeholder, onSend, onEditLast,
     view?.drafts.delete(key);
     try {
       await onSend(body, sending, parentId);
+      sounds.sent();
     } catch (err) {
       ta.value = body;
       files = sending;
@@ -474,7 +637,36 @@ function composer({ channelId, parentId = null, placeholder, onSend, onEditLast,
     if (mod && e.shiftKey && e.key.toLowerCase() === "x") { e.preventDefault(); wrap("~~"); return; }
     if (e.key === "ArrowUp" && !ta.value && onEditLast) { if (onEditLast()) e.preventDefault(); }
   });
+  const pasteHint = h("div.paste-hint", { hidden: true });
+  let hintTimer = null;
+  const hideHint = () => { pasteHint.hidden = true; clearTimeout(hintTimer); };
   ta.addEventListener("paste", (e) => {
+    const text = (e.clipboardData?.getData("text/plain") || "").replace(/\r\n?/g, "\n");
+    const before = ta.value.slice(0, ta.selectionStart);
+    const insideFence = ((before.match(/```/g) || []).length % 2) === 1;
+    if (text && !insideFence && looksLikeCode(text)) {
+      const start = ta.selectionStart;
+      setTimeout(() => {
+        const end = start + text.length;
+        if (ta.value.slice(start, end) !== text) return;
+        clear(pasteHint, icon("snippet", { size: 15 }), h("span", "Looks like code."),
+          h("button.link", {
+            type: "button", onmousedown: (ev) => ev.preventDefault(),
+            onclick: () => {
+              if (ta.value.slice(start, end) === text) {
+                ta.setRangeText(`${start && ta.value[start - 1] !== "\n" ? "\n" : ""}${fence(text, guessLang(text))}\n`, start, end, "end");
+                sync();
+              }
+              hideHint();
+              ta.focus();
+            },
+          }, "Format as code block"),
+          h("button.link.muted", { type: "button", onclick: hideHint }, "Keep as text"));
+        pasteHint.hidden = false;
+        clearTimeout(hintTimer);
+        hintTimer = setTimeout(hideHint, 10_000);
+      }, 0);
+    }
     const pasted = [...(e.clipboardData?.files || [])];
     if (pasted.length) {
       e.preventDefault();
@@ -485,22 +677,24 @@ function composer({ channelId, parentId = null, placeholder, onSend, onEditLast,
 
   const tool = (ic, title, run) => h("button.ctool", { type: "button", title, "aria-label": title, onmousedown: (e) => e.preventDefault(), onclick: run }, icon(ic, { size: 15 }));
   const emojiBtn = tool("smile", "Emoji", () => emojiPicker(emojiBtn, insert));
-  const el = h("div.composer",
+  const el = h("div.chat-composer",
     filesRow,
-    h("div.composer-box", ac, ta,
-      h("div.composer-bar",
-        h("div.composer-tools",
+    pasteHint,
+    h("div.cc-box", ac, ta,
+      h("div.cc-bar",
+        h("div.cc-tools",
           tool("bold", "Bold (Ctrl+B)", () => wrap("**")),
           tool("italic", "Italic (Ctrl+I)", () => wrap("_")),
           tool("strike", "Strikethrough", () => wrap("~~")),
-          tool("code", "Code", () => (ta.value.slice(ta.selectionStart, ta.selectionEnd).includes("\n") ? wrap("```\n", "\n```", "code") : wrap("`", "`", "code"))),
+          tool("snippet", "Code snippet", () => snippetDialog(async (b, f) => { await onSend(b, f, parentId); sounds.sent(); })),
+          tool("code", "Inline code", () => (ta.value.slice(ta.selectionStart, ta.selectionEnd).includes("\n") ? wrap("```\n", "\n```", "code") : wrap("`", "`", "code"))),
           tool("link", "Link", () => wrap("[", "](https://)", "link text")),
           tool("list", "Bulleted list", () => linePrefix("- ")),
           h("span.ctool-sep"),
           tool("at", "Mention someone", () => { insert(ta.value && !/\s$/.test(ta.value.slice(0, ta.selectionStart)) ? " @" : "@"); updateAc(); }),
           emojiBtn,
           tool("paperclip", "Attach files", () => fileInput.click())),
-        h("span.composer-hint", h("kbd", "Enter"), " to send · ", h("kbd", "Shift"), "+", h("kbd", "Enter"), " new line"),
+        h("span.cc-hint", h("kbd", "Enter"), " to send · ", h("kbd", "Shift"), "+", h("kbd", "Enter"), " new line"),
         sendBtn)),
     fileInput);
   renderFiles();
@@ -548,11 +742,13 @@ class ChatView {
     this.onVisible = () => { if (!document.hidden) { shared.viewing = this.current?.id ?? null; this.maybeMarkRead(); } else { shared.viewing = null; } };
     document.addEventListener("keydown", this.onKey);
     document.addEventListener("visibilitychange", this.onVisible);
+    this.offCalls = onCallsChange(() => this.renderHeader());
   }
 
   destroy() {
     clearInterval(this.typingTimer);
     clearTimeout(this.readTimer);
+    this.offCalls?.();
     document.removeEventListener("keydown", this.onKey);
     document.removeEventListener("visibilitychange", this.onVisible);
     closePop();
@@ -647,6 +843,7 @@ class ChatView {
         h("strong", "Chat"),
         h(`span.live-dot${live ? ".on" : ""}`, { title: live ? "Live" : "Reconnecting…" }),
         h("div.chat-side-actions",
+          h("button.icon-btn", { type: "button", title: "Chat settings", "aria-label": "Chat settings", onclick: (e) => this.prefsMenu(e.currentTarget) }, icon("settings", { size: 17 })),
           h("button.icon-btn", { type: "button", title: "Search messages", "aria-label": "Search messages", onclick: () => this.openPanel({ kind: "search" }) }, icon("search", { size: 17 })),
           h("button.icon-btn", { type: "button", title: "New message", "aria-label": "New message", onclick: () => this.newDm() }, icon("compose", { size: 17 })))),
       h("div.chat-side-filter", icon("search", { size: 14 }), filterInput),
@@ -657,6 +854,30 @@ class ChatView {
         archived.length ? section("archived", "Archived", archived, null, null) : null),
       h("div.chat-side-foot",
         h("button.btn.ghost.sm", { type: "button", onclick: () => this.browse() }, icon("hash", { size: 14 }), "Browse channels")));
+  }
+
+  prefsMenu(anchor) {
+    const flip = (key, on, off) => () => {
+      prefs.set(key, !prefs.get(key));
+      toast(prefs.get(key) ? on : off);
+      if (key === "sounds" && prefs.get(key)) sounds.test();
+    };
+    const tick = (key) => (prefs.get(key) ? "On" : "Off");
+    const canAsk = "Notification" in window && Notification.permission !== "granted";
+    menu(anchor, [
+      { icon: prefs.get("sounds") ? "volume" : "volume-off", label: "Message sounds", hint: tick("sounds"), run: flip("sounds", "Message sounds on", "Message sounds off") },
+      { icon: "phone", label: "Call ringtone", hint: tick("ringtone"), run: flip("ringtone", "Ringtone on", "Ringtone off") },
+      { icon: "sparkles", label: "Animated effects", hint: tick("effects"), run: flip("effects", "Emoji effects on 🎉", "Effects off") },
+      { icon: "bell", label: "Play a test sound", run: () => sounds.test() },
+      canAsk ? {
+        icon: "bell", label: "Desktop notifications", hint: Notification.permission === "denied" ? "Blocked" : "Off",
+        run: async () => {
+          if (Notification.permission === "denied") { toast("Notifications are blocked - allow them in the browser's site settings", "error"); return; }
+          const p = await Notification.requestPermission();
+          toast(p === "granted" ? "Desktop notifications on" : "Desktop notifications stay off");
+        },
+      } : null,
+    ]);
   }
 
   toggleSection(key) {
@@ -802,17 +1023,39 @@ class ChatView {
         partner.designation || userById(partner.id)?.designation ? ` · ${partner.designation || userById(partner.id)?.designation}` : "") : h("span.chat-sub", `${(ch.members || []).length} people`))
       : h("button.chat-topic", { type: "button", title: ch.topic ? "Edit topic" : "Add a topic", onclick: () => this.editTopic(), disabled: !ch.can_post }, ch.topic || (ch.can_post ? "Add a topic" : ""));
     const action = (ic, title, run, extra) => h("button.icon-btn", { type: "button", title, "aria-label": title, onclick: run }, icon(ic, { size: 17 }), extra);
+    const live = activeCalls.get(ch.id);
+    const mine = currentCall()?.channel_id === ch.id;
+    const label = ch.kind === "dm" ? ch.display_name : channelTitle(ch);
+    const isDm = ch.kind === "dm" && (ch.members || []).length <= 2;
+    const callButtons = !ch.can_post ? null : live
+      ? h(`button.btn.sm.call-join${mine ? ".in" : ""}`, {
+        type: "button", onclick: () => joinCall(live.id, { video: false, label, channelId: ch.id }),
+        title: mine ? "Show the call" : "Join the call",
+      }, h("span.call-join-dot"), icon(live.video ? "video" : "phone", { size: 14 }), mine ? "In call" : `Join call · ${live.participant_ids?.length || 1}`)
+      : [
+        action("phone", isDm ? `Call ${label}` : "Start an audio call", () => this.call(false)),
+        action("video", isDm ? `Video call ${label}` : "Start a video call", () => this.call(true)),
+      ];
     clear(this.headerEl,
       h("button.icon-btn.chat-back", { type: "button", "aria-label": "Back to conversations", onclick: () => this.el.classList.remove("has-current") }, icon("chevron-left", { size: 18 })),
       h("div.chat-head-main", titleBtn, sub),
       h("div.chat-head-actions",
         ch.kind !== "dm" ? h("button.chat-people", { type: "button", title: "Members", onclick: () => this.openPanel({ kind: "members" }) },
           h("span.avatars", people.map((u) => avatar(u, "sm"))), h("span", String(ch.member_count ?? this.members.length))) : null,
+        callButtons,
+        callButtons ? h("span.head-sep") : null,
         action("pin", "Pinned messages", () => this.openPanel({ kind: "pins" }), pinned ? h("span.head-count", String(pinned)) : null),
         action("paperclip", "Files", () => this.openPanel({ kind: "files" })),
         action("search", "Search this conversation", () => this.openPanel({ kind: "search", channel: ch.id })),
         action(ch.muted ? "bell-off" : "bell", ch.muted ? "Unmute" : "Mute", () => this.toggleMute()),
         h("button.icon-btn", { type: "button", title: "More", "aria-label": "More", onclick: (e) => this.moreMenu(e.currentTarget) }, icon("more", { size: 17 }))));
+  }
+
+  call(video) {
+    const ch = this.current;
+    const isDm = ch.kind === "dm" && (ch.members || []).length <= 2;
+    if (callsSupported() && !isDm && (ch.member_count || 0) > 2) toast(`Calling everyone in ${channelTitle(ch)} - they'll hear a ring`);
+    startCall(ch.id, { video, label: ch.kind === "dm" ? ch.display_name : channelTitle(ch), dm: isDm });
   }
 
   moreMenu(anchor) {
@@ -978,7 +1221,7 @@ class ChatView {
   }
 
   grouped(prev, m) {
-    if (!prev || !prev.user || !m.user || prev.user.id !== m.user.id || prev.deleted || m.deleted) return false;
+    if (!prev || !prev.user || !m.user || prev.user.id !== m.user.id || prev.deleted || m.deleted || prev.call || m.call) return false;
     if (m.id === this.firstUnreadId) return false;
     const a = parseDate(prev.created_at);
     const b = parseDate(m.created_at);
@@ -999,7 +1242,7 @@ class ChatView {
     ].filter(Boolean).join(".");
     const body = m.deleted
       ? h("p.msg-deleted", icon("trash", { size: 13 }), "This message was deleted.")
-      : m.body ? renderBody(m.body) : null;
+      : m.call ? this.callCard(m.call) : m.body ? renderBody(m.body) : null;
     const el = h(`div.${cls}`, { dataset: { id: m.id }, tabindex: "-1" },
       h("div.msg-gutter", grouped ? h("span.msg-gtime", timeFmt.format(d)) : (m.user ? presenceAvatar(m.user, "") : avatar(null))),
       h("div.msg-main",
@@ -1015,6 +1258,25 @@ class ChatView {
         !inThread && m.reply_count ? this.threadSummary(m) : null),
       m.deleted ? null : this.actions(m, inThread));
     return el;
+  }
+
+  callCard(c) {
+    const inIt = currentCall()?.id === c.id;
+    const n = c.participant_ids.length;
+    const kind = c.video ? "Video call" : "Audio call";
+    const status = c.active
+      ? `In progress · ${n} ${n === 1 ? "person" : "people"}`
+      : c.answered_at ? `Ended · lasted ${fmtDuration(c.duration_seconds || 0)}` : (c.started_by === me().id ? "No answer" : "Missed call");
+    const ch = this.current;
+    const label = ch?.kind === "dm" ? ch.display_name : channelTitle(ch || {});
+    const missed = !c.active && !c.answered_at;
+    return h(`div.call-card${c.active ? ".live" : ""}${missed ? ".missed" : ""}`,
+      h("span.call-card-ic", icon(c.video ? "video" : "phone", { size: 18 })),
+      h("div.call-card-meta", h("strong", c.active ? `${kind} started` : missed && c.started_by !== me().id ? `Missed ${kind.toLowerCase()}` : kind), h("span.muted.small", status)),
+      c.active ? h("span.avatars", c.participant_ids.slice(0, 4).map((id) => avatar(userById(id) || { id, name: "?", email: String(id) }, "sm"))) : null,
+      c.active && !inIt && ch?.can_post ? h("button.btn.primary.sm", { type: "button", onclick: () => joinCall(c.id, { video: false, label, channelId: c.channel_id }) }, icon("phone", { size: 14 }), "Join")
+        : inIt ? h("span.msg-tag.ok", "You're in this call")
+          : !c.active && ch?.can_post ? h("button.btn.sm", { type: "button", onclick: () => this.call(c.video) }, icon(c.video ? "video" : "phone", { size: 14 }), "Call back") : null);
   }
 
   renderFiles(m) {
@@ -1075,7 +1337,7 @@ class ChatView {
       h("button.ma", {
         type: "button", title: "More actions", "aria-label": "More actions",
         onclick: (e) => menu(e.currentTarget, [
-          isMe && canPost ? { icon: "edit", label: "Edit message", run: () => this.startEdit(m) } : null,
+          isMe && canPost && !m.call ? { icon: "edit", label: "Edit message", run: () => this.startEdit(m) } : null,
           !inThread && canPost ? { icon: "message", label: "Reply in thread", run: () => this.openThread(m.id) } : null,
           canPost ? { icon: "pin", label: m.pinned ? "Unpin" : "Pin to conversation", run: () => this.pin(m) } : null,
           !inThread && !isMe ? { icon: "eye-off", label: "Mark unread from here", run: () => this.markUnread(m) } : null,
@@ -1173,6 +1435,8 @@ class ChatView {
     for (const sep of this.separators(prev, m)) this.listEl.append(sep);
     const el = this.renderMessage(m, prev);
     el.classList.add("arrive");
+    const trigger = !m.call && (m.body || "").match(BURST);
+    if (trigger) emojiBurst(this.mainEl.querySelector(".chat-body"), trigger[0], { count: isEmojiOnly((m.body || "").trim()) ? 26 : 14 });
     this.msgEls.set(m.id, el);
     this.listEl.append(el);
     if (stick) { this.scrollToBottom(true); this.maybeMarkRead(); } else if (m.user?.id !== me().id) {
@@ -1325,6 +1589,12 @@ class ChatView {
     try {
       const updated = await api.post(`/chat/messages/${m.id}/reactions`, { emoji });
       this.onUpdate(updated);
+      const r = updated.reactions.find((x) => x.emoji === emoji);
+      if (r?.user_ids.includes(me().id)) {
+        const scope = this.msgEls.get(m.id) || this.panelEl;
+        const chip = [...scope.querySelectorAll(".reaction")].find((b) => b.querySelector(".reaction-e")?.textContent === emoji);
+        reactionPop(chip, emoji);
+      }
     } catch (err) { toast(err.message, "error"); }
   }
 
@@ -1346,7 +1616,7 @@ class ChatView {
   }
 
   editLast() {
-    const mine = [...this.messages].reverse().find((m) => m.user?.id === me().id && !m.deleted);
+    const mine = [...this.messages].reverse().find((m) => m.user?.id === me().id && !m.deleted && !m.call);
     if (!mine) return false;
     this.startEdit(mine);
     return true;
@@ -1783,7 +2053,7 @@ class ChatView {
 
   // ---------------------------------------------------------------- keyboard
   handleKey(e) {
-    if (document.querySelector(".backdrop, .pal-backdrop")) return;
+    if (document.querySelector(".backdrop, .pal-backdrop") || e.target.closest?.(".call-ui, .call-ring")) return;
     if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
       const items = [...this.side.querySelectorAll(".chat-item")];
       const i = items.findIndex((a) => Number(a.dataset.id) === this.current?.id);

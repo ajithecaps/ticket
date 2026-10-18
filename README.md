@@ -411,8 +411,60 @@ background thread, so Slack never slows the API). On top of that:
 3. Set `APP_BASE_URL` to the address people open the app at, restart, and use **Slack** in the admin
    menu to send a test message, preview or send the summary, or run the overdue check.
 
+Admins can also do all of this from **Slack** in the admin menu without touching `.env`: switch it on
+or off, paste the webhook or bot token (stored encrypted, shown masked), pick the channel, choose which
+events to send, and set the summary time, days and time zone. Values saved there override `.env`;
+*Reset to .env* removes them. Changes reach every worker within 15 seconds.
+
 All settings are in `.env.example`. The jobs run in one process per host (a file lock in `UPLOAD_DIR`
 picks it); if you run the API on several hosts, set `SCHEDULER_ENABLED=false` on all but one.
+
+## Team chat and calls
+
+**Chat** in the sidebar (`G M`) is real-time team chat:
+
+- **Conversations** - every project gets a channel its members see automatically; anyone can create
+  public or private channels; direct messages work 1:1 or with up to 8 people.
+- **Messages** - Markdown, `@mentions` (`@channel` / `@here` for everyone), emoji picker and
+  `:shortcode:` autocomplete, threads, reactions, edit (↑ edits your last message), delete, pin, copy
+  link, "mark unread from here", files and images by picking, dragging or pasting, and search.
+- **Code** - the *Code snippet* button opens an editor with language detection and Tab indenting.
+  Pasting something that looks like code offers to format it as a code block. Every code block has
+  syntax highlighting and a **Copy** button; long ones fold.
+- **Live** - typing indicators, online dots, unread and mention badges (sidebar and nav), a "New"
+  divider, jump to latest, desktop notifications for DMs and mentions, and an Inbox notification
+  when someone mentions you, replies to your message, or messages you while you're away.
+- **Fun** - emoji sent on their own are shown big and animated (laughing shakes, hearts beat, rockets
+  launch …), 🎉 🚀 ❤️ 🔥 etc. set off a shower of emoji across the conversation, and reactions pop.
+- **Sounds** - a soft ping for new messages, a brighter chime for DMs and mentions, a ringtone for
+  incoming calls and a ringback while you're calling. All of them can be switched off per person from
+  the ⚙ menu in the chat sidebar (along with the animations).
+
+**Audio and video calls** - the 📞 / 🎥 buttons in any conversation ring the other person (DM) or
+everyone in the channel (group call, up to `CHAT_MAX_CALL_PEOPLE` = 8). People answer with audio or
+video, or join later from the call card in the conversation. In a call: mute (Ctrl+D), camera
+(Ctrl+E), screen sharing (tuned for sharp text), grid or spotlight layout (double-click a tile),
+full screen, a minimised draggable window that keeps going while you use the rest of the app, live
+speaking highlights, connection-quality bars and a settings panel for microphone, camera and speaker,
+video quality (360p / 720p / 1080p) and noise suppression. The call log (missed / duration) stays in
+the conversation.
+
+Calls are peer-to-peer WebRTC: the server only relays the connection setup over the chat WebSocket,
+so it adds no load for audio or video. Two things matter in production:
+
+1. **HTTPS is required.** Browsers only allow the microphone and camera on `https://` (or
+   `localhost`). Chat works over plain http on a LAN, calls do not.
+2. **Add a TURN server for people behind strict firewalls or on mobile data.** STUN (Google's public
+   servers by default, `CHAT_STUN_URLS`) is enough on most office and home networks. For the rest,
+   run [coturn](https://github.com/coturn/coturn) and set `CHAT_TURN_URL` (e.g.
+   `turn:turn.example.com:3478?transport=udp,turns:turn.example.com:5349`), `CHAT_TURN_USERNAME`
+   and `CHAT_TURN_CREDENTIAL`.
+
+How the real-time part works: each change is written to a `chat_events` table in the same transaction,
+and every API worker tails that table and pushes new rows to its WebSockets. Several workers (or
+hosts) stay in sync through the database alone, without Redis. If you put a proxy in front, it must
+pass WebSocket upgrades for `/api/v1/chat/ws` (nginx: `proxy_set_header Upgrade $http_upgrade;
+proxy_set_header Connection "upgrade";`).
 
 ## Notes before production
 

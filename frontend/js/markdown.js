@@ -5,7 +5,7 @@
 // GitHub-style callouts (> [!NOTE]), <details> sections, :emoji: shortcodes, heading anchors and
 // ticket keys (PAY-12) as links. Everything is sanitised with DOMPurify; heavy libraries (highlight.js,
 // KaTeX, Mermaid) are loaded only when a note actually uses them.
-import { clear, h, modal, toast } from "./ui.js";
+import { clear, copyText, h, modal, toast } from "./ui.js";
 
 const VENDOR = "/static/vendor";
 
@@ -240,7 +240,8 @@ function enhance(el, source, { onTaskToggle } = {}) {
     const copy = h("button.md-copy", {
       type: "button",
       onclick: async () => {
-        try { await navigator.clipboard.writeText(code.textContent); copy.textContent = "Copied"; } catch { copy.textContent = "Select & copy"; }
+        await copyText(code.textContent.replace(/\n$/, ""), "Code copied");
+        copy.textContent = "Copied ✓";
         setTimeout(() => { copy.textContent = "Copy"; }, 1500);
       },
     }, "Copy");

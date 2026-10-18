@@ -1389,3 +1389,46 @@ def test_chat_channels_messages_and_realtime(client, admin, world):
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect(f"{C}/ws?token=nope") as bad:
             bad.receive_json()
+
+
+def test_chat_calls(client, admin, world):
+    asha, kiran, zed = world["asha"], world["kiran"], world["zed"]
+    C = f"{API}/chat"
+    assert client.get(f"{C}/rtc-config", headers=asha["headers"]).json()["iceServers"][0]["urls"]
+    dm = client.post(f"{C}/dm", headers=asha["headers"], json={"user_ids": [kiran["id"]]}).json()
+
+    with client.websocket_connect(f"{C}/ws?token={kiran['headers']['Authorization'][7:]}") as ws:
+        assert ws.receive_json()["type"] == "hello"
+        call = client.post(f"{C}/channels/{dm['id']}/calls", headers=asha["headers"], json={"video": True}).json()
+        assert call["active"] and call["participant_ids"] == [asha["id"]] and call["video"]
+        ev = ws.receive_json()
+        while ev["type"] != "call.ring":
+            ev = ws.receive_json()
+        assert ev["from"]["id"] == asha["id"] and ev["call"]["id"] == call["id"]
+
+        # the call shows up in the conversation as a message
+        msgs = client.get(f"{C}/channels/{dm['id']}/messages", headers=kiran["headers"]).json()["messages"]
+        assert msgs[-1]["call"]["id"] == call["id"]
+        # starting again joins the same call; outsiders can't touch it
+        assert client.post(f"{C}/calls/{call['id']}/join", headers=zed["headers"]).status_code == 404
+        joined = client.post(f"{C}/channels/{dm['id']}/calls", headers=kiran["headers"], json={}).json()
+        assert joined["id"] == call["id"] and set(joined["participant_ids"]) == {asha["id"], kiran["id"]} and joined["answered_at"]
+
+        # signalling is relayed only between participants
+        with client.websocket_connect(f"{C}/ws?token={asha['headers']['Authorization'][7:]}") as ws2:
+            assert ws2.receive_json()["type"] == "hello"
+            ws2.send_json({"type": "call.signal", "call_id": call["id"], "to": kiran["id"], "data": {"description": {"type": "offer", "sdp": "v=0"}}})
+            ev = ws.receive_json()
+            while ev["type"] != "call.signal":
+                ev = ws.receive_json()
+            assert ev["from"] == asha["id"] and ev["data"]["description"]["type"] == "offer"
+
+        # hanging up a 1:1 call ends it for both and logs the duration
+        ended = client.post(f"{C}/calls/{call['id']}/leave", headers=kiran["headers"]).json()
+        assert not ended["active"] and ended["duration_seconds"] is not None
+    assert client.get(f"{C}/calls/active", headers=asha["headers"]).json() == []
+
+    # a declined 1:1 call ends as missed
+    call = client.post(f"{C}/channels/{dm['id']}/calls", headers=asha["headers"], json={}).json()
+    out = client.post(f"{C}/calls/{call['id']}/decline", headers=kiran["headers"]).json()
+    assert not out["active"] and out["answered_at"] is None

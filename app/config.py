@@ -25,6 +25,13 @@ class Settings(BaseSettings):
 
     # Public address of the web app, used for ticket links in Slack messages.
     APP_BASE_URL: str = "http://localhost:8000"
+    # Chat calls (WebRTC). STUN finds a direct path; add a TURN server so calls also work through
+    # strict firewalls / mobile networks (e.g. coturn).
+    CHAT_STUN_URLS: str = "stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302"
+    CHAT_TURN_URL: str = ""
+    CHAT_TURN_USERNAME: str = ""
+    CHAT_TURN_CREDENTIAL: str = ""
+    CHAT_MAX_CALL_PEOPLE: int = 8
     # Local time zone for the daily summary schedule and dates shown in Slack.
     TIMEZONE: str = "Asia/Kolkata"
 

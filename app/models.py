@@ -571,6 +571,9 @@ class ChatMessage(Base):
     user: Mapped[User | None] = relationship(lazy="joined")
     reactions: Mapped[list["ChatReaction"]] = relationship(cascade="all, delete-orphan", lazy="selectin")
     files: Mapped[list["ChatFile"]] = relationship(cascade="all, delete-orphan", lazy="selectin")
+    call: Mapped["ChatCall | None"] = relationship(
+        primaryjoin="ChatCall.message_id == ChatMessage.id", foreign_keys="ChatCall.message_id", uselist=False, viewonly=True, lazy="selectin"
+    )
 
 
 class ChatReaction(Base):
@@ -611,3 +614,30 @@ class ChatPresence(Base):
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     last_seen: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class ChatCall(Base):
+    """An audio/video call in a conversation. Media flows peer-to-peer (WebRTC); the server only
+    relays signalling and keeps the call log shown in the chat."""
+
+    __tablename__ = "chat_calls"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    channel_id: Mapped[int] = mapped_column(ForeignKey("chat_channels.id", ondelete="CASCADE"), index=True)
+    message_id: Mapped[int | None] = mapped_column(ForeignKey("chat_messages.id", ondelete="SET NULL"), nullable=True, unique=True)
+    started_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    video: Mapped[bool] = mapped_column(Boolean, default=False)
+    started_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    answered_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+
+    participants: Mapped[list["ChatCallParticipant"]] = relationship(cascade="all, delete-orphan", lazy="selectin")
+
+
+class ChatCallParticipant(Base):
+    __tablename__ = "chat_call_participants"
+
+    call_id: Mapped[int] = mapped_column(ForeignKey("chat_calls.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    joined_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    left_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)

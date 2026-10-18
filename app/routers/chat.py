@@ -1,5 +1,6 @@
 """Team chat: project channels, public/private channels, direct messages, threads, reactions, pins,
 files, search, read state and a WebSocket for live updates (see app/chat_hub.py)."""
+import asyncio
 import json
 import mimetypes
 import re
@@ -20,6 +21,8 @@ from ..config import settings
 from ..database import SessionLocal
 from ..deps import CurrentUser, DbSession
 from ..models import (
+    ChatCall,
+    ChatCallParticipant,
     ChatChannel,
     ChatFile,
     ChatMember,
@@ -41,6 +44,7 @@ router = APIRouter(prefix="/chat", tags=["Team chat"])
 
 MAX_BODY = 10_000
 MAX_GROUP_DM = 9
+CALL_GRACE_SECONDS = 20  # a dropped socket gets this long to reconnect before its calls are hung up
 _EMAIL_MENTION = re.compile(r"(?<![\w.])@([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})")
 _BROADCAST = re.compile(r"(?<![\w.])@(channel|here|everyone)\b")
 _EMOJI = re.compile(r"^\S{1,32}$")
@@ -166,6 +170,18 @@ def _brief(u: User | None) -> dict | None:
     return {"id": u.id, "name": u.name, "email": u.email} if u else None
 
 
+def _call_out(call: ChatCall) -> dict:
+    active = [p.user_id for p in call.participants if p.left_at is None] if call.ended_at is None else []
+    end = call.ended_at
+    duration = int((end - call.answered_at).total_seconds()) if end and call.answered_at else None
+    return {
+        "id": call.id, "channel_id": call.channel_id, "message_id": call.message_id, "video": call.video,
+        "started_by": call.started_by, "started_at": call.started_at, "answered_at": call.answered_at, "ended_at": call.ended_at,
+        "active": call.ended_at is None, "duration_seconds": duration,
+        "participant_ids": active, "joined_ids": sorted({p.user_id for p in call.participants}),
+    }
+
+
 def _message_out(m: ChatMessage) -> dict:
     grouped: dict[str, list[int]] = {}
     for r in sorted(m.reactions, key=lambda r: r.created_at):
@@ -183,6 +199,7 @@ def _message_out(m: ChatMessage) -> dict:
         "edited_at": m.edited_at,
         "created_at": m.created_at,
         "reactions": [{"emoji": e, "count": len(ids), "user_ids": ids} for e, ids in grouped.items()],
+        "call": _call_out(m.call) if m.call else None,
         "files": [] if m.deleted else [
             {"id": f.id, "filename": f.filename, "content_type": f.content_type, "size": f.size,
              "is_image": f.content_type.startswith("image/")}
@@ -881,6 +898,189 @@ def search_messages(
 
 
 # --------------------------------------------------------------------------- #
+# Audio / video calls (WebRTC; the server relays signalling only)
+# --------------------------------------------------------------------------- #
+class CallIn(BaseModel):
+    video: bool = False
+
+
+@router.get("/rtc-config", summary="ICE servers for WebRTC calls")
+def rtc_config(_user: CurrentUser):
+    servers = [{"urls": [u.strip() for u in settings.CHAT_STUN_URLS.split(",") if u.strip()]}]
+    if settings.CHAT_TURN_URL:
+        servers.append({"urls": [u.strip() for u in settings.CHAT_TURN_URL.split(",") if u.strip()],
+                        "username": settings.CHAT_TURN_USERNAME, "credential": settings.CHAT_TURN_CREDENTIAL})
+    return {"iceServers": [s for s in servers if s["urls"]], "maxPeople": settings.CHAT_MAX_CALL_PEOPLE}
+
+
+def _active_call(db: Session, channel_id: int) -> ChatCall | None:
+    return db.scalar(select(ChatCall).where(ChatCall.channel_id == channel_id, ChatCall.ended_at.is_(None)).order_by(ChatCall.id.desc()))
+
+
+def _call_or_404(db: Session, call_id: int, user: User) -> tuple[ChatCall, ChatChannel]:
+    call = db.get(ChatCall, call_id)
+    ch = db.get(ChatChannel, call.channel_id) if call else None
+    if call is None or ch is None or not _can_read(db, ch, user):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Call not found")
+    return call, ch
+
+
+def _participant(call: ChatCall, user_id: int) -> ChatCallParticipant | None:
+    return next((p for p in call.participants if p.user_id == user_id), None)
+
+
+def _call_changed(db: Session, call: ChatCall, ch: ChatChannel, type_: str = "call.update", **extra) -> None:
+    db.flush()
+    emit(db, type_, {"call": _call_out(call), **extra}, channel_id=ch.id)
+    if call.message_id:
+        msg = db.get(ChatMessage, call.message_id)
+        if msg is not None:
+            db.expire(msg, ["call"])
+            emit(db, "message.update", {"message": _message_out(msg)}, channel_id=ch.id)
+
+
+def _end_call(db: Session, call: ChatCall, ch: ChatChannel) -> None:
+    now = utcnow()
+    call.ended_at = now
+    for p in call.participants:
+        if p.left_at is None:
+            p.left_at = now
+    _call_changed(db, call, ch, "call.ended")
+
+
+def _channel_label(ch: ChatChannel, viewer: User | None = None) -> str:
+    if ch.kind == "project":
+        return ch.project.name if ch.project else (ch.name or "project")
+    return f"#{ch.name}" if ch.kind == "channel" else "Direct message"
+
+
+@router.get("/calls/active", summary="Calls going on in conversations you can see")
+def active_calls(user: CurrentUser, db: DbSession):
+    out = []
+    for call in db.scalars(select(ChatCall).where(ChatCall.ended_at.is_(None))).all():
+        ch = db.get(ChatChannel, call.channel_id)
+        if ch and _can_read(db, ch, user):
+            out.append({**_call_out(call), "channel_label": _channel_label(ch)})
+    return out
+
+
+@router.post("/channels/{channel_id}/calls", status_code=status.HTTP_201_CREATED, summary="Start a call (or join the one in progress)")
+def start_call(channel_id: int, payload: CallIn, user: CurrentUser, db: DbSession):
+    ch = _channel_or_404(db, channel_id, user)
+    if not _can_post(db, ch, user):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Join the conversation to call")
+    existing = _active_call(db, ch.id)
+    if existing is not None:
+        return join_call(existing.id, user, db)
+    now = utcnow()
+    msg = ChatMessage(channel_id=ch.id, user_id=user.id, body="", created_at=now)
+    db.add(msg)
+    db.flush()
+    call = ChatCall(channel_id=ch.id, message_id=msg.id, started_by=user.id, video=payload.video, started_at=now)
+    call.participants.append(ChatCallParticipant(user_id=user.id, joined_at=now))
+    db.add(call)
+    ch.last_message_at = now
+    _ensure_member(db, ch, user).last_read_id = msg.id
+    db.flush()
+    db.expire(msg, ["call"])
+    emit(db, "message.new", {"message": _message_out(msg)}, channel_id=ch.id)
+    ring_to = channel_audience(db, ch) - {user.id}
+    if ring_to:
+        muted = set(db.scalars(select(ChatMember.user_id).where(ChatMember.channel_id == ch.id, ChatMember.muted.is_(True))))
+        emit(db, "call.ring", {"call": _call_out(call), "from": _brief(user), "channel_label": _channel_label(ch),
+                               "channel_kind": ch.kind}, channel_id=ch.id, user_ids=ring_to - muted if ch.kind != "dm" else ring_to)
+    db.commit()
+    return {**_call_out(call), "channel_label": _channel_label(ch)}
+
+
+@router.post("/calls/{call_id}/join", summary="Join a call")
+def join_call(call_id: int, user: CurrentUser, db: DbSession):
+    call, ch = _call_or_404(db, call_id, user)
+    if call.ended_at is not None:
+        raise HTTPException(status.HTTP_410_GONE, "This call has ended")
+    if not _can_post(db, ch, user):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Join the conversation to take part in the call")
+    me_in = _participant(call, user.id)
+    active = [p for p in call.participants if p.left_at is None and p.user_id != user.id]
+    if len(active) >= settings.CHAT_MAX_CALL_PEOPLE:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Calls are limited to {settings.CHAT_MAX_CALL_PEOPLE} people")
+    now = utcnow()
+    if me_in is None:
+        call.participants.append(ChatCallParticipant(user_id=user.id, joined_at=now))
+    else:
+        me_in.left_at = None
+        me_in.joined_at = now
+    if call.answered_at is None and user.id != call.started_by:
+        call.answered_at = now
+    _call_changed(db, call, ch, joined=user.id)
+    db.commit()
+    return {**_call_out(call), "channel_label": _channel_label(ch)}
+
+
+def _leave(db: Session, call: ChatCall, ch: ChatChannel, user_id: int) -> None:
+    p = _participant(call, user_id)
+    if p is None or p.left_at is not None or call.ended_at is not None:
+        return
+    p.left_at = utcnow()
+    db.flush()
+    still = [x for x in call.participants if x.left_at is None]
+    # a 1:1 call ends when either side hangs up; group calls end when the last person leaves
+    one_to_one = ch.kind == "dm" and len(channel_audience(db, ch)) <= 2
+    if not still or (one_to_one and call.answered_at is not None) or (len(still) == 1 and call.answered_at is None and still[0].user_id != call.started_by):
+        _end_call(db, call, ch)
+    else:
+        _call_changed(db, call, ch, left=user_id)
+
+
+@router.post("/calls/{call_id}/leave", summary="Hang up")
+def leave_call(call_id: int, user: CurrentUser, db: DbSession):
+    call, ch = _call_or_404(db, call_id, user)
+    _leave(db, call, ch, user.id)
+    db.commit()
+    return _call_out(call)
+
+
+@router.post("/calls/{call_id}/decline", summary="Decline a ringing call")
+def decline_call(call_id: int, user: CurrentUser, db: DbSession):
+    call, ch = _call_or_404(db, call_id, user)
+    if call.ended_at is None:
+        active = [p.user_id for p in call.participants if p.left_at is None]
+        emit(db, "call.declined", {"call_id": call.id, "user": _brief(user)}, channel_id=ch.id, user_ids=active + [user.id])
+        if ch.kind == "dm" and len(channel_audience(db, ch)) <= 2 and call.answered_at is None:
+            _end_call(db, call, ch)
+        db.commit()
+    return _call_out(call)
+
+
+def _relay_signal(user: User, call_id: int, to: int, data: dict) -> None:
+    with SessionLocal() as db:
+        call = db.get(ChatCall, call_id)
+        if call is None or call.ended_at is not None:
+            return
+        active = {p.user_id for p in call.participants if p.left_at is None}
+        if user.id not in active or to not in active or to == user.id:
+            return
+        emit(db, "call.signal", {"call_id": call_id, "from": user.id, "data": data}, channel_id=call.channel_id, user_ids=[to])
+        db.commit()
+
+
+def _leave_calls_if_gone(user_id: int) -> None:
+    """The socket dropped for good (tab closed, laptop asleep): hang up their calls."""
+    with SessionLocal() as db:
+        if user_id in online_user_ids(db):
+            return
+        rows = db.scalars(
+            select(ChatCall).join(ChatCallParticipant, ChatCallParticipant.call_id == ChatCall.id)
+            .where(ChatCall.ended_at.is_(None), ChatCallParticipant.user_id == user_id, ChatCallParticipant.left_at.is_(None))
+        ).all()
+        for call in rows:
+            ch = db.get(ChatChannel, call.channel_id)
+            if ch is not None:
+                _leave(db, call, ch, user_id)
+        db.commit()
+
+
+# --------------------------------------------------------------------------- #
 # WebSocket
 # --------------------------------------------------------------------------- #
 def _socket_user(token: str) -> User | None:
@@ -927,6 +1127,9 @@ async def chat_socket(ws: WebSocket, token: str = ""):
             kind = data.get("type") if isinstance(data, dict) else None
             if kind == "ping":
                 await ws.send_json({"type": "pong"})
+            elif kind == "call.signal" and isinstance(data.get("call_id"), int) and isinstance(data.get("to"), int) \
+                    and isinstance(data.get("data"), dict) and len(raw) < 64_000:
+                await run_in_threadpool(_relay_signal, user, data["call_id"], data["to"], data["data"])
             elif kind == "typing" and isinstance(data.get("channel_id"), int):
                 parent = data.get("parent_id") if isinstance(data.get("parent_id"), int) else None
                 await run_in_threadpool(_typing, user, data["channel_id"], parent)
@@ -936,3 +1139,14 @@ async def chat_socket(ws: WebSocket, token: str = ""):
         pass
     finally:
         await hub.disconnect(ws, user.id)
+        if not hub.is_connected(user.id):
+            asyncio.get_running_loop().create_task(_hang_up_later(user.id))
+
+
+async def _hang_up_later(user_id: int, delay: float = CALL_GRACE_SECONDS) -> None:
+    await asyncio.sleep(delay)
+    if not hub.is_connected(user_id):
+        try:
+            await run_in_threadpool(_leave_calls_if_gone, user_id)
+        except Exception:  # noqa: BLE001
+            pass
