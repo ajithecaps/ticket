@@ -19,7 +19,7 @@ from starlette.concurrency import run_in_threadpool
 from ..chat_hub import channel_audience, emit, hub, online_user_ids
 from ..config import settings
 from ..database import SessionLocal
-from ..deps import CurrentUser, DbSession
+from ..deps import AdminUser, CurrentUser, DbSession
 from ..models import (
     ChatCall,
     ChatCallParticipant,
@@ -411,7 +411,8 @@ def browse_channels(user: CurrentUser, db: DbSession):
 
 
 @router.post("/channels", status_code=status.HTTP_201_CREATED, summary="Create a channel")
-def create_channel(payload: ChannelIn, user: CurrentUser, db: DbSession):
+def create_channel(payload: ChannelIn, user: AdminUser, db: DbSession):
+    """Only admins create channels (project channels are created automatically with each project)."""
     name = _slug(payload.name)
     if db.scalar(select(ChatChannel.id).where(ChatChannel.kind == "channel", ChatChannel.name == name)):
         raise HTTPException(status.HTTP_409_CONFLICT, f"#{name} already exists")
@@ -512,8 +513,8 @@ def add_members(channel_id: int, payload: IdsIn, user: CurrentUser, db: DbSessio
     ch = _channel_or_404(db, channel_id, user)
     if ch.kind != "channel":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "People are added to project channels through the project, and to direct messages by starting a new one")
-    if not (_membership(db, ch.id, user.id) or is_admin(user)):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Join the channel first")
+    if not is_admin(user):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only an admin can add people to a channel")
     added = []
     for u in _active_users(db, payload.user_ids):
         if _membership(db, ch.id, u.id) is None:
@@ -528,8 +529,8 @@ def add_members(channel_id: int, payload: IdsIn, user: CurrentUser, db: DbSessio
 @router.delete("/channels/{channel_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Remove someone")
 def remove_member(channel_id: int, user_id: int, user: CurrentUser, db: DbSession):
     ch = _channel_or_404(db, channel_id, user)
-    if ch.kind != "channel" or not _can_manage(db, ch, user):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the channel's creator or an admin can remove people")
+    if ch.kind != "channel" or not is_admin(user):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only an admin can remove people from a channel")
     member = _membership(db, ch.id, user_id)
     if member is not None:
         _channel_changed(db, ch, [user_id])

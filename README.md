@@ -423,8 +423,9 @@ picks it); if you run the API on several hosts, set `SCHEDULER_ENABLED=false` on
 
 **Chat** in the sidebar (`G M`) is real-time team chat:
 
-- **Conversations** - every project gets a channel its members see automatically; anyone can create
-  public or private channels; direct messages work 1:1 or with up to 8 people.
+- **Conversations** - every project gets a channel its members see automatically. Only admins create
+  projects and public or private channels, and only admins add or remove channel members; everyone
+  can join public channels and start direct messages (1:1 or up to 8 people).
 - **Messages** - Markdown, `@mentions` (`@channel` / `@here` for everyone), emoji picker and
   `:shortcode:` autocomplete, threads, reactions, edit (↑ edits your last message), delete, pin, copy
   link, "mark unread from here", files and images by picking, dragging or pasting, and search.

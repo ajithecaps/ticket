@@ -1354,19 +1354,23 @@ def test_chat_channels_messages_and_realtime(client, admin, world):
     assert client.get(f"{C}/channels/{pay_ch['id']}/messages", headers=asha["headers"]).json()["messages"] == []
 
     # public / private channels
-    pub = client.post(f"{C}/channels", headers=ravi["headers"], json={"name": "Random Talk", "topic": "Anything"}).json()
+    # only admins create channels and manage who is in them
+    assert client.post(f"{C}/channels", headers=ravi["headers"], json={"name": "Random Talk"}).status_code == 403
+    pub = client.post(f"{C}/channels", headers=admin, json={"name": "Random Talk", "topic": "Anything"}).json()
     assert pub["name"] == "random-talk"
-    assert client.post(f"{C}/channels", headers=asha["headers"], json={"name": "random-talk"}).status_code == 409
+    assert client.post(f"{C}/channels", headers=admin, json={"name": "random-talk"}).status_code == 409
     assert any(c["id"] == pub["id"] and not c["joined"] for c in client.get(f"{C}/channels/browse", headers=zed["headers"]).json())
     assert client.post(f"{C}/channels/{pub['id']}/messages", headers=zed["headers"], data={"body": "hi"}).status_code == 403
     client.post(f"{C}/channels/{pub['id']}/join", headers=zed["headers"])
     assert client.post(f"{C}/channels/{pub['id']}/messages", headers=zed["headers"], data={"body": "hi"}).status_code == 201
-    priv = client.post(f"{C}/channels", headers=ravi["headers"], json={"name": "leads", "is_private": True, "member_ids": [kiran["id"]]}).json()
+    priv = client.post(f"{C}/channels", headers=admin, json={"name": "leads", "is_private": True, "member_ids": [ravi["id"], kiran["id"]]}).json()
+    assert client.post(f"{C}/channels/{priv['id']}/members", headers=kiran["headers"], json={"user_ids": [asha["id"]]}).status_code == 403
+    assert client.delete(f"{C}/channels/{priv['id']}/members/{kiran['id']}", headers=ravi["headers"]).status_code == 403
     assert client.get(f"{C}/channels/{priv['id']}", headers=asha["headers"]).status_code == 404
     assert client.post(f"{C}/channels/{priv['id']}/join", headers=asha["headers"]).status_code == 404
-    assert {m["id"] for m in client.get(f"{C}/channels/{priv['id']}/members", headers=kiran["headers"]).json()} == {ravi["id"], kiran["id"]}
+    assert {m["id"] for m in client.get(f"{C}/channels/{priv['id']}/members", headers=kiran["headers"]).json()} >= {ravi["id"], kiran["id"]}
     assert client.patch(f"{C}/channels/{priv['id']}", headers=kiran["headers"], json={"name": "x"}).status_code == 403
-    assert client.patch(f"{C}/channels/{priv['id']}", headers=ravi["headers"], json={"archived": True}).json()["archived"]
+    assert client.patch(f"{C}/channels/{priv['id']}", headers=admin, json={"archived": True}).json()["archived"]
     assert client.post(f"{C}/channels/{priv['id']}/messages", headers=kiran["headers"], data={"body": "late"}).status_code == 403
 
     # direct messages are reused, private, and notify people who are away

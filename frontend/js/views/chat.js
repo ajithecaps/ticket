@@ -16,6 +16,7 @@ const LAST_KEY = "chat.lastChannel";
 const GROUP_MS = 5 * 60 * 1000;
 const TYPING_MS = 6000;
 const me = () => auth.user;
+const isAdmin = () => auth.user?.role === "admin";
 
 // ============================================================================ shared state
 // Lives for the whole session so the nav badge and desktop notifications work on every page.
@@ -849,7 +850,7 @@ class ChatView {
       h("div.chat-side-filter", icon("search", { size: 14 }), filterInput),
       h("nav.chat-side-scroll", { "aria-label": "Conversations" },
         section("project", "Projects", this.sorted("project"), "Browse project channels", me().role === "admin" ? () => this.browse() : null),
-        section("channel", "Channels", this.sorted("channel"), "Add a channel", (e) => this.channelMenu(e.currentTarget)),
+        section("channel", "Channels", this.sorted("channel"), isAdmin() ? "Add a channel" : "Browse channels", (e) => (isAdmin() ? this.channelMenu(e.currentTarget) : this.browse())),
         section("dm", "Direct messages", this.sorted("dm"), "New message", () => this.newDm()),
         archived.length ? section("archived", "Archived", archived, null, null) : null),
       h("div.chat-side-foot",
@@ -910,7 +911,7 @@ class ChatView {
     clear(this.mainEl, h("div.chat-welcome",
       emptyState("Welcome to team chat", "Talk with your project teams in real time, start a channel, or message someone directly.",
         h("div.row.gap", h("button.btn.primary", { onclick: () => this.newDm() }, icon("compose", { size: 15 }), "New message"),
-          h("button.btn", { onclick: () => this.createChannel() }, icon("plus", { size: 15 }), "Create a channel")), "message")));
+          isAdmin() ? h("button.btn", { onclick: () => this.createChannel() }, icon("plus", { size: 15 }), "Create a channel") : null), "message")));
   }
 
   // ---------------------------------------------------------------- open a conversation
@@ -1065,7 +1066,7 @@ class ChatView {
       { icon: "link", label: "Copy link", run: () => copyText(`${location.origin}${location.pathname}#/chat/${ch.id}`, "Link copied") },
       ch.kind !== "dm" && ch.can_post ? { icon: "edit", label: ch.topic ? "Edit topic" : "Add a topic", run: () => this.editTopic() } : null,
       ch.kind === "channel" && ch.can_manage ? { icon: "edit", label: "Rename channel", run: () => this.rename() } : null,
-      ch.kind === "channel" && ch.joined ? { icon: "user", label: "Add people", run: () => this.addPeople() } : null,
+      ch.kind === "channel" && isAdmin() ? { icon: "user", label: "Add people", run: () => this.addPeople() } : null,
       ch.kind === "project" && ch.project_id ? { icon: "folder", label: "Open project", run: () => { location.hash = `#/projects/${ch.project_id}`; } } : null,
       "-",
       ch.kind !== "dm" && ch.can_manage ? { icon: "archive", label: ch.archived ? "Unarchive" : "Archive", danger: !ch.archived, run: () => this.archive() } : null,
@@ -1832,7 +1833,7 @@ class ChatView {
     const listEl = h("div.browse-list", spinner(4));
     const search = h("input", { type: "search", placeholder: "Search channels", "aria-label": "Search channels" });
     const m = modal("Browse channels", h("div.browse", h("div.row.gap", search,
-      h("button.btn.sm", { type: "button", onclick: () => { m.close(); this.createChannel(); } }, icon("plus", { size: 14 }), "Create")), listEl), { wide: true });
+      isAdmin() ? h("button.btn.sm", { type: "button", onclick: () => { m.close(); this.createChannel(); } }, icon("plus", { size: 14 }), "Create") : null), listEl), { wide: true });
     let all = [];
     const paint = () => {
       const q = search.value.trim().toLowerCase();
@@ -1853,7 +1854,7 @@ class ChatView {
               await this.open(c.id);
               toast(`Joined ${channelTitle(c)}`);
             }),
-          }, "Join") : null))) : emptyState("No channels found", "Create one for a topic, a team or a launch.", null, "hash"));
+          }, "Join") : null))) : emptyState("No channels found", isAdmin() ? "Create one for a topic, a team or a launch." : "Ask an admin to create a channel.", null, "hash"));
     };
     search.addEventListener("input", paint);
     try { all = await api.get("/chat/channels/browse"); paint(); } catch (err) { clear(listEl, errorBox(err)); }
@@ -1895,14 +1896,14 @@ class ChatView {
     if (p.kind === "members") {
       const online = this.members.filter((u) => shared.online.has(u.id)).length;
       this.panelShell("Members", `${this.members.length} · ${online} online`,
-        ch.kind === "channel" && ch.joined ? h("button.btn.sm.panel-add", { type: "button", onclick: () => this.addPeople() }, icon("plus", { size: 14 }), "Add people") : null,
+        ch.kind === "channel" && isAdmin() ? h("button.btn.sm.panel-add", { type: "button", onclick: () => this.addPeople() }, icon("plus", { size: 14 }), "Add people") : null,
         h("ul.member-list", this.members.map((u) => h("li",
           presenceAvatar(u, ""),
           h("div.member-meta", h("strong", u.name, u.id === me().id ? h("span.muted", " (you)") : null), h("span.muted.small", u.designation || u.email)),
           u.role !== "member" ? h(`span.msg-tag${u.role === "owner" ? ".ok" : ""}`, u.role === "owner" ? (ch.kind === "project" ? "Owner" : "Creator") : "Admin") : null,
           h("div.member-actions",
             u.id !== me().id ? h("button.icon-btn.sm", { type: "button", title: `Message ${u.name}`, onclick: () => this.dmWith([u.id]) }, icon("message", { size: 14 })) : null,
-            ch.kind === "channel" && ch.can_manage && u.id !== me().id ? h("button.icon-btn.sm", {
+            ch.kind === "channel" && isAdmin() && u.id !== me().id ? h("button.icon-btn.sm", {
               type: "button", title: `Remove ${u.name}`,
               onclick: async () => {
                 if (!(await confirmDialog("Remove member", `Remove ${u.name} from #${ch.name}?`, "Remove"))) return;
