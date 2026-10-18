@@ -1,4 +1,5 @@
 import { api, auth } from "../api.js";
+import { icon } from "../icons.js";
 import { navigate } from "../app.js";
 import { confirmIfOverlapping, fetchOverlaps, overlapCount } from "../overlaps.js";
 import {
@@ -131,8 +132,8 @@ export async function renderTicket(main, key) {
       h("div.crumbs",
         h("a", { href: `#/projects/${t.project.id}` }, t.project.name), " / ",
         h("span.key", t.key),
-        h("button.icon-btn.copy", { title: "Copy link", "aria-label": "Copy link", onclick: () => copyText(ticketUrl(), "Link copied") }, "⧉"),
-        h("button.btn.ghost.sm.copy-key", { title: "Copy key and title", onclick: () => copyText(`${t.key} ${t.title}`, `${t.key} copied`) }, "Copy key")),
+        h("button.icon-btn.copy", { title: "Copy link", "aria-label": "Copy link", onclick: () => copyText(ticketUrl(), "Link copied") }, icon("link", { size: 15 })),
+        h("button.btn.ghost.sm.copy-key", { title: "Copy key and title", onclick: () => copyText(`${t.key} ${t.title}`, `${t.key} copied`) }, icon("copy", { size: 14 }), "Copy key")),
       h("div.ticket-head",
         h("div.ticket-head-main", titleEl,
           h("div.row.wrap", typeBadge(t.type), priorityBadge(t.priority),
@@ -268,7 +269,7 @@ export async function renderTicket(main, key) {
       row("Assignee", [assigneeCell, meAssign, clashSlot]),
       row("Reporter", userChip(t.reporter)),
       t.release && row("Release", h("a.badge.rel-chip", { href: `#/releases/${t.release.id}` },
-        t.release.status === "released" ? `🚀 ${t.release.name} · released ${fmtDate(t.release.released_at)}` : `${t.release.name} · planned`)),
+        t.release.status === "released" ? [icon("rocket", { size: 12 }), ` ${t.release.name} · released ${fmtDate(t.release.released_at)}`] : `${t.release.name} · planned`)),
       row("Type", t.can_edit ? select("type", TYPES, t.type, { "aria-label": "Type", onchange: (e) => patch({ type: e.target.value }) }) : label(t.type)),
       row("Priority", canOwner ? select("priority", PRIORITIES, t.priority, { "aria-label": "Priority", onchange: (e) => patch({ priority: e.target.value }) }) : priorityBadge(t.priority)),
       row("Start date", canOwner
@@ -415,7 +416,7 @@ function mentionComposer(t, initial, onSubmit, { withFiles = false, submitLabel 
   const fileInput = withFiles && h("input", { type: "file", multiple: true, hidden: true, onchange: () => { pending = [...fileInput.files]; drawFiles(); } });
   const fileList = h("div.tags");
   const drawFiles = () => clear(fileList, pending.map((f, i) =>
-    h("span.tag", `📎 ${f.name}`, h("button", { type: "button", "aria-label": `Remove ${f.name}`, onclick: () => { pending.splice(i, 1); drawFiles(); } }, "×"))));
+    h("span.tag", icon("paperclip", { size: 12 }), ` ${f.name}`, h("button", { type: "button", "aria-label": `Remove ${f.name}`, onclick: () => { pending.splice(i, 1); drawFiles(); } }, "×"))));
 
   let items = [];
   let active = 0;
@@ -474,7 +475,7 @@ function mentionComposer(t, initial, onSubmit, { withFiles = false, submitLabel 
     h("div.row.between",
       h("div.row",
         withFiles && fileInput,
-        withFiles && h("button.btn.sm.ghost", { type: "button", onclick: () => fileInput.click() }, "📎 Attach"),
+        withFiles && h("button.btn.sm.ghost", { type: "button", onclick: () => fileInput.click() }, icon("paperclip", { size: 14 }), "Attach"),
         h("span.muted.small.hide-sm", "⌘/Ctrl + Enter to send")),
       h("div.row",
         onCancel && h("button.btn.sm", { type: "button", onclick: onCancel }, "Cancel"),
@@ -500,9 +501,9 @@ function mentionComposer(t, initial, onSubmit, { withFiles = false, submitLabel 
 // ----------------------------------------------------------------------------- files
 function fileChip(a, onDelete) {
   return h("div.file",
-    h("button.link", { onclick: () => api.download(a).catch((err) => toast(err.message, "error")), title: "Download" }, `📄 ${a.filename}`),
+    h("button.link", { onclick: () => api.download(a).catch((err) => toast(err.message, "error")), title: "Download" }, icon("file", { size: 14 }), ` ${a.filename}`),
     h("span.muted.small", `${fmtBytes(a.size)} · ${a.uploader.name} · ${timeAgo(a.created_at)}`),
-    onDelete && h("button.icon-btn.small", { "aria-label": `Delete ${a.filename}`, onclick: () => onDelete(a) }, "✕"));
+    onDelete && h("button.icon-btn.small", { "aria-label": `Delete ${a.filename}`, onclick: () => onDelete(a) }, icon("x", { size: 14 })));
 }
 
 async function files(el, t, onChange) {
@@ -570,7 +571,7 @@ async function worklog(el, t, isOwner, onChange) {
         avatar(w.user, "sm"),
         h("div.grow", h("strong", fmtHours(w.hours)), " ", h("span", w.user.name), w.note && h("div.muted", w.note)),
         h("span.muted.small", { title: fmtDateTime(w.logged_at) }, timeAgo(w.logged_at)),
-        (w.user.id === auth.user.id || isOwner) && h("button.icon-btn.small", { "aria-label": "Delete entry", onclick: () => del(w) }, "✕"))))
+        (w.user.id === auth.user.id || isOwner) && h("button.icon-btn.small", { "aria-label": "Delete entry", onclick: () => del(w) }, icon("x", { size: 14 })))))
       : h("p.muted.pad", "No time logged yet."));
 }
 

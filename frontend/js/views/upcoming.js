@@ -1,5 +1,6 @@
 // Upcoming tasks: per-project requirements gathered before a ticket exists. Admins edit; members read.
 import { api, auth, request } from "../api.js";
+import { icon } from "../icons.js";
 import { navigate } from "../app.js";
 import { fetchOverlaps, overlapCount } from "../overlaps.js";
 import {
@@ -26,13 +27,13 @@ function card(t, { showProject = false } = {}) {
   return h("a.card.up-card", { href: `#/upcoming/${t.id}` },
     h("div.row.between",
       h("div.row", upcomingBadge(t.status), priorityBadge(t.priority)),
-      t.target_date ? h("span.small.muted", { title: "Target date" }, `🎯 ${fmtDate(t.target_date)}`) : h("span.small.muted", "No target date")),
+      t.target_date ? h("span.small.muted", { title: "Target date" }, icon("target", { size: 12 }), ` ${fmtDate(t.target_date)}`) : h("span.small.muted", "No target date")),
     h("strong.up-title", t.title),
     showProject ? h("span.muted.small", t.project.name) : null,
     h("div.row.wrap.up-meta",
       criteriaMeter(t),
-      t.reference_links.length ? h("span.small.muted", `🔗 ${t.reference_links.length}`) : null,
-      t.documents.length ? h("span.small.muted", `📄 ${t.documents.length}`) : null,
+      t.reference_links.length ? h("span.small.muted.ic-count", icon("link", { size: 12 }), ` ${t.reference_links.length}`) : null,
+      t.documents.length ? h("span.small.muted.ic-count", icon("file", { size: 12 }), ` ${t.documents.length}`) : null,
       t.ticket ? h("span.small", "→ ", h("span.key", t.ticket.key)) : null));
 }
 
@@ -98,7 +99,7 @@ function referencesEditor(initial) {
     const row = h("div.ref-row",
       h("input", { placeholder: "Title (optional)", value: ref.title, maxLength: 200, "aria-label": "Reference title", dataset: { k: "title" } }),
       h("input", { type: "url", placeholder: "https://…", value: ref.url, maxLength: 2000, "aria-label": "Reference URL", dataset: { k: "url" } }),
-      h("button.icon-btn", { type: "button", "aria-label": "Remove reference", onclick: () => row.remove() }, "✕"));
+      h("button.icon-btn", { type: "button", "aria-label": "Remove reference", onclick: () => row.remove() }, icon("x", { size: 14 })));
     rows.append(row);
   };
   (initial.length ? initial : []).forEach(addRow);
@@ -171,13 +172,13 @@ export async function renderUpcomingDetail(main, id) {
         h("div.ticket-head-main",
           h("h1.ticket-title", t.title),
           h("div.row.wrap", upcomingBadge(t.status), priorityBadge(t.priority),
-            t.target_date && h("span.badge", `🎯 Target ${fmtDate(t.target_date)}`),
+            t.target_date && h("span.badge", icon("target", { size: 12 }), ` Target ${fmtDate(t.target_date)}`),
             criteriaMeter(t))),
         h("div.ticket-head-actions",
           t.can_convert && h("button.btn.primary", { onclick: convertDialog }, "Convert to ticket"),
           t.can_edit && h("button.btn", { onclick: () => editDialog(t) }, "Edit"),
           t.can_edit && h("button.btn.ghost.danger.sm", { onclick: del }, "Delete"))),
-      t.ticket && h("div.banner.verified", h("span.banner-icon", "🎫"),
+      t.ticket && h("div.banner.verified", h("span.banner-icon", icon("tickets", { size: 18 })),
         h("div", "Converted to ticket ", h("a", { href: `#/tickets/${t.ticket.key}` }, h("strong", t.ticket.key)),
           h("span.muted", ` · ${label(t.ticket.status)}`))),
       h("div.ticket-layout",
@@ -200,9 +201,9 @@ export async function renderUpcomingDetail(main, id) {
             docsInput,
             t.documents.length
               ? h("div.files.inline", t.documents.map((d) => h("div.file",
-                h("button.link", { title: "Download", onclick: () => download(d) }, `📄 ${d.filename}`),
+                h("button.link", { title: "Download", onclick: () => download(d) }, icon("file", { size: 14 }), ` ${d.filename}`),
                 h("span.muted.small", `${fmtBytes(d.size)} · ${timeAgo(d.created_at)}`),
-                t.can_edit && h("button.icon-btn.small", { "aria-label": `Delete ${d.filename}`, onclick: () => deleteDoc(d) }, "✕"))))
+                t.can_edit && h("button.icon-btn.small", { "aria-label": `Delete ${d.filename}`, onclick: () => deleteDoc(d) }, icon("x", { size: 14 })))))
               : h("p.muted.small", t.can_edit ? "Upload specs, designs or any supporting files." : "No documents yet.")),
           h("section.card.props.dates",
             h("div.prop", h("span.prop-label", "Project"), h("a", { href: `#/projects/${t.project.id}` }, t.project.name)),

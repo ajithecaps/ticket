@@ -1,4 +1,5 @@
 import { api } from "../api.js";
+import { icon } from "../icons.js";
 import { navigate } from "../app.js";
 import { avatar, busy, clear, emptyState, h, spinner, timeAgo, toast } from "../ui.js";
 
@@ -39,7 +40,7 @@ export function notificationBell() {
     h("button.icon-btn.bell", {
       "aria-label": "Notifications",
       onclick: (e) => { e.stopPropagation(); wrap.classList.toggle("open"); if (wrap.classList.contains("open")) loadList(); },
-    }, "🔔", badge),
+    }, icon("bell", { size: 18 }), badge),
     panel);
   document.addEventListener("click", (e) => { if (!wrap.contains(e.target)) wrap.classList.remove("open"); });
 

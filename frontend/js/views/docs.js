@@ -1,5 +1,6 @@
 // Documentation: Markdown pages per project, nested, with a page tree, table of contents and history.
 import { api } from "../api.js";
+import { icon } from "../icons.js";
 import { currentQuery, navigate } from "../app.js";
 import { markdownEditor, renderMarkdown } from "../markdown.js";
 import { avatar, busy, clear, confirmDialog, copyText, emptyState, fmtDateTime, h, select, spinner, timeAgo, toast } from "../ui.js";
@@ -64,7 +65,7 @@ async function docTree({ activeId = null, projectId = null } = {}) {
             onclick: () => { if (open) collapsed.add(`proj${proj.id}`); else collapsed.delete(`proj${proj.id}`); saveCollapsed(collapsed); rerender(); },
           }, open ? "▾" : "▸"),
           h("span.key-pill", proj.key), h("span.ellipsis.grow", proj.name), h("span.muted.small", String(count)),
-          h("a.icon-btn.small", { href: `#/docs/new?project=${proj.id}`, title: `New page in ${proj.name}`, "aria-label": "New page" }, "+")),
+          h("a.icon-btn.small", { href: `#/docs/new?project=${proj.id}`, title: `New page in ${proj.name}`, "aria-label": "New page" }, icon("plus", { size: 14 }))),
         open ? (branch(proj.id, 0, 0) || h("p.muted.small.doc-tree-empty", "No pages yet")) : null);
     }));
   }

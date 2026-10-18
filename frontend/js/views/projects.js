@@ -1,4 +1,5 @@
 import { api, auth } from "../api.js";
+import { icon } from "../icons.js";
 import { navigate } from "../app.js";
 import {
   CLOSED, STATUSES, avatar, busy, clear, confirmDialog, emptyState, errorBox, field, fmtDate, formData, h, label,
@@ -195,7 +196,7 @@ async function renderBoard(body, project, owner) {
           owner && CLOSED.includes(s) && all.length > 0 && h("button.icon-btn.col-release", {
             title: "Move these finished tickets into a release", "aria-label": "Move to release",
             onclick: () => addToReleaseDialog(project.id, { preselect: all.map((t) => t.id), onDone: () => load() }),
-          }, "🚀")),
+          }, icon("rocket", { size: 15 }))),
         h("div.col-body",
           items.map(card),
           !items.length && h("div.col-empty", filtering() ? "No matching cards" : s === "todo" ? "Nothing to do" : "Drop cards here"),
@@ -242,7 +243,7 @@ async function renderBoard(body, project, owner) {
     const finished = CLOSED.includes(t.status);
     const tone = finished ? "" : t.is_overdue ? ".overdue" : days <= 2 ? ".soon" : "";
     const text = finished ? fmtShort(due) : t.is_overdue ? `${fmtShort(due)} · ${-days || 1}d late` : days <= 1 ? (days <= 0 ? "Due today" : "Due tomorrow") : fmtShort(due);
-    return h(`span.chip-due${tone}`, { title: `Due ${fmtDate(t.due_date)}` }, "📅 ", text);
+    return h(`span.chip-due${tone}`, { title: `Due ${fmtDate(t.due_date)}` }, icon("calendar", { size: 12 }), " ", text);
   }
   const fmtShort = (d) => d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 

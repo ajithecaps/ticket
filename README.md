@@ -278,6 +278,12 @@ change it in place, **saved views** and **CSV export** of everything that matche
 are remembered per browser. API sort keys: `created_at, updated_at, due_date, start_date, priority,
 status, title, key, assignee` with `order=asc|desc`.
 
+**Navigation & shortcuts:** the sidebar groups Work / Plan & ship / Admin and collapses to icons; the
+command palette (**⌘K / Ctrl+K**, or **/**) finds tickets, docs, projects and people and runs actions.
+Shortcuts: **C** new ticket, **G** then **D/T/P/L/O/R/U/N** to jump, **?** for the list.
+UI building blocks live in `frontend/js/icons.js` (line icons), `palette.js`, `theme.js`, `ui.js`; the type
+face is Inter, bundled in `frontend/vendor/inter/`.
+
 **Theme:** the ☀️ / 🌙 / 🖥 button in the top bar (or the account menu) switches Light / Dark / System;
 the choice is stored per browser and applied before the page paints.
 

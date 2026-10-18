@@ -1,5 +1,6 @@
 // Releases: finished tickets grouped per project and shipped to production together.
 import { api } from "../api.js";
+import { icon } from "../icons.js";
 import { navigate } from "../app.js";
 import {
   avatar, busy, clear, confirmDialog, emptyState, field, fmtDate, fmtDateTime, fromDateInput, h, label,
@@ -11,7 +12,7 @@ const TYPE_ORDER = ["feature", "improvement", "bug", "task"];
 const TYPE_HEADING = { feature: "New features", improvement: "Improvements", bug: "Bug fixes", task: "Other changes" };
 
 export const releaseBadge = (r) => (r.status === "released"
-  ? h("span.badge.rel-released", "🚀 Released")
+  ? h("span.badge.rel-released", icon("rocket", { size: 12 }), "Released")
   : h("span.badge.rel-planned", "Planned"));
 
 function typeSummary(byType) {
@@ -181,7 +182,7 @@ export async function renderReleaseDetail(main, id) {
               : r.planned_date ? `Planned for ${fmtDate(r.planned_date)}` : "No planned date"))),
         h("div.ticket-head-actions",
           r.can_manage && h("button.btn", { onclick: () => addToReleaseDialog(r.project.id, { releaseId: r.id, onDone: reload }) }, "Add tickets"),
-          r.can_manage && h("button.btn.success", { onclick: publish, disabled: !r.ticket_count }, "🚀 Release to production"),
+          r.can_manage && h("button.btn.success", { onclick: publish, disabled: !r.ticket_count }, icon("rocket", { size: 15 }), "Release to production"),
           r.can_edit && h("button.btn", { onclick: () => releaseDialog(r) }, r.status === "released" ? "Edit notes" : "Edit"),
           r.can_manage && h("button.btn.ghost.danger.sm", { onclick: del }, "Delete"))),
       r.status === "planned" && r.unverified_count > 0 && h("div.banner.pending", h("span.banner-icon", "⏳"),
@@ -202,7 +203,7 @@ export async function renderReleaseDetail(main, id) {
   async function publish() {
     const extra = r.unverified_count ? ` ${r.unverified_count} ticket(s) still in Done will be marked Verified.` : "";
     if (!(await confirmDialog(`Release ${r.name}`, `Mark ${r.name} as released to production with ${r.ticket_count} ticket(s)?${extra} The project's members will be notified and the release is locked afterwards.`, "Release"))) return;
-    await busy(null, async () => { await api.post(`/releases/${r.id}/release`); toast(`🚀 ${r.name} released`); await reload(); });
+    await busy(null, async () => { await api.post(`/releases/${r.id}/release`); toast(`${r.name} released to production`); await reload(); });
   }
   async function del() {
     if (!(await confirmDialog("Delete release", `Delete ${r.name}? Its ${r.ticket_count} ticket(s) go back to the board.`))) return;

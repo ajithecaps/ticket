@@ -1,7 +1,6 @@
 import { api } from "../api.js";
 import { clear, h } from "../ui.js";
 import { filteredTicketList } from "./ticketlist.js";
-import { newTicketDialog } from "./ticket.js";
 
 export async function renderTickets(main) {
   // Everyone the caller may see: admins get all active users, others the people they share a project with.
@@ -25,8 +24,7 @@ export async function renderTickets(main) {
     h("div.page-head",
       h("h1", "Tickets"),
       h("div.actions",
-        projectSelect,
-        projects.length > 0 && h("button.btn.primary", { onclick: () => newTicketDialog(projects, projectSelect.value) }, "New ticket"))),
+        projectSelect)),
     body);
   mount(projectFilter);
 }

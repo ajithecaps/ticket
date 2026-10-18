@@ -4,6 +4,7 @@
 // sortable columns, column picker, density, page size, group by, row selection with bulk actions,
 // inline status change, saved views and CSV export.
 import { api, auth } from "../api.js";
+import { icon } from "../icons.js";
 import { currentQuery, setQuery } from "../app.js";
 import {
   PRIORITIES, STATUSES, TYPES, avatar, busy, clear, confirmDialog, emptyState, errorBox, fmtDate, fmtDateTime, h,
@@ -22,7 +23,7 @@ export function ticketTable(tickets, { showProject = true } = {}) {
         h("td", h("div.title-cell", typeBadge(t.type), h("span", t.title))),
         showProject && h("td.hide-sm.muted", t.project.name),
         h("td", h("div.row", statusBadge(t.status),
-          t.release && h("a.badge.rel-chip", { href: `#/releases/${t.release.id}`, title: `In release ${t.release.name}` }, `🚀 ${t.release.name}`))),
+          t.release && h("a.badge.rel-chip", { href: `#/releases/${t.release.id}`, title: `In release ${t.release.name}` }, [icon("rocket", { size: 12 }), ` ${t.release.name}`]))),
         h("td.hide-sm", priorityBadge(t.priority)),
         h("td.hide-sm", userChip(t.assignee)),
         h(`td.nowrap${t.is_overdue ? ".overdue" : ""}`, t.due_date ? fmtDate(t.due_date) : h("span.muted", "—")),
@@ -65,7 +66,7 @@ const COLUMNS = [
     },
     csv: (t) => `${t.spent_hours || 0}/${t.estimated_hours ?? ""}`,
   },
-  { id: "release", name: "Release", cell: (t) => (t.release ? h("a.badge.rel-chip", { href: `#/releases/${t.release.id}` }, `🚀 ${t.release.name}`) : h("span.muted", "—")), csv: (t) => t.release?.name || "" },
+  { id: "release", name: "Release", cell: (t) => (t.release ? h("a.badge.rel-chip", { href: `#/releases/${t.release.id}` }, [icon("rocket", { size: 12 }), ` ${t.release.name}`]) : h("span.muted", "—")), csv: (t) => t.release?.name || "" },
   { id: "created", name: "Created", sort: "created_at", cell: (t) => h("span.muted", { title: fmtDateTime(t.created_at) }, timeAgo(t.created_at)), csv: (t) => t.created_at },
   { id: "updated", name: "Updated", sort: "updated_at", cell: (t) => h("span.muted", { title: fmtDateTime(t.updated_at) }, timeAgo(t.updated_at)), csv: (t) => t.updated_at },
 ];
@@ -171,14 +172,14 @@ export function filteredTicketList(opts) {
     { "aria-label": "Rows per page", onchange: (e) => { prefs.pageSize = Number(e.target.value); persist(); state.offset = 0; load(); } });
   const densityBtn = h("button.btn.sm", {
     type: "button", title: "Row density",
-    onclick: () => { prefs.density = prefs.density === "compact" ? "comfortable" : "compact"; persist(); densityBtn.textContent = densityText(); draw(); },
+    onclick: () => { prefs.density = prefs.density === "compact" ? "comfortable" : "compact"; persist(); setDensityLabel(); draw(); },
   });
-  const densityText = () => (prefs.density === "compact" ? "☰ Compact" : "☰ Comfortable");
-  densityBtn.textContent = densityText();
+  const setDensityLabel = () => densityBtn.replaceChildren(icon("rows", { size: 14 }), prefs.density === "compact" ? "Compact" : "Comfortable");
+  setDensityLabel();
 
   const columnsMenu = h("div.menu.col-menu");
   const columnsWrap = h("div.dropdown",
-    h("button.btn.sm", { type: "button", "aria-haspopup": "true", onclick: (e) => { e.stopPropagation(); drawColumnsMenu(); columnsWrap.classList.toggle("open"); } }, "▦ Columns"),
+    h("button.btn.sm", { type: "button", "aria-haspopup": "true", onclick: (e) => { e.stopPropagation(); drawColumnsMenu(); columnsWrap.classList.toggle("open"); } }, icon("columns", { size: 14 }), "Columns"),
     columnsMenu);
   function drawColumnsMenu() {
     clear(columnsMenu,
@@ -196,7 +197,7 @@ export function filteredTicketList(opts) {
 
   const viewsMenu = h("div.menu.col-menu");
   const viewsWrap = h("div.dropdown",
-    h("button.btn.sm", { type: "button", "aria-haspopup": "true", onclick: (e) => { e.stopPropagation(); drawViewsMenu(); viewsWrap.classList.toggle("open"); } }, "★ Views"),
+    h("button.btn.sm", { type: "button", "aria-haspopup": "true", onclick: (e) => { e.stopPropagation(); drawViewsMenu(); viewsWrap.classList.toggle("open"); } }, icon("star", { size: 14 }), "Views"),
     viewsMenu);
   function drawViewsMenu() {
     clear(viewsMenu,
@@ -211,7 +212,7 @@ export function filteredTicketList(opts) {
             applyFilters(v.filters);
           },
         }, v.name),
-        h("button.icon-btn.small", { "aria-label": `Delete view ${v.name}`, onclick: (e) => { e.stopPropagation(); prefs.views.splice(i, 1); persist(); drawViewsMenu(); } }, "✕")))
+        h("button.icon-btn.small", { "aria-label": `Delete view ${v.name}`, onclick: (e) => { e.stopPropagation(); prefs.views.splice(i, 1); persist(); drawViewsMenu(); } }, icon("x", { size: 14 }))))
         : h("p.muted.small.pad", "No saved views yet."),
       h("button", {
         onclick: () => {
@@ -233,7 +234,7 @@ export function filteredTicketList(opts) {
     if (!viewsWrap.contains(e.target)) viewsWrap.classList.remove("open");
   });
 
-  const exportBtn = h("button.btn.sm", { type: "button", title: "Download the filtered tickets as CSV", onclick: (e) => busy(e.currentTarget, exportCsv) }, "⇩ CSV");
+  const exportBtn = h("button.btn.sm", { type: "button", title: "Download the filtered tickets as CSV", onclick: (e) => busy(e.currentTarget, exportCsv) }, icon("download", { size: 14 }), "CSV");
 
   // ------------------------------------------------------------- data
   function params(extra = {}) {
@@ -295,7 +296,7 @@ export function filteredTicketList(opts) {
         type: "button", title: "Change status",
         onclick: (e) => { e.stopPropagation(); openStatusMenu(t, e.currentTarget); },
       }, statusBadge(t.status), h("span.caret", "▾")),
-      t.release && columns.includes("release") === false && h("a.badge.rel-chip", { href: `#/releases/${t.release.id}`, title: `In release ${t.release.name}` }, "🚀"));
+      t.release && columns.includes("release") === false && h("a.badge.rel-chip", { href: `#/releases/${t.release.id}`, title: `In release ${t.release.name}` }, icon("rocket", { size: 12 })));
   }
   function openStatusMenu(t, anchor) {
     document.querySelectorAll(".status-pop").forEach((p) => p.remove());

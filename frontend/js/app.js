@@ -1,6 +1,9 @@
 import { api, auth, setUnauthorizedHandler } from "./api.js";
 import { setProjectKeys } from "./markdown.js";
 import { getTheme, onThemeChange, setTheme } from "./theme.js";
+import { icon } from "./icons.js";
+import { MOD, configurePalette, installShortcuts, openPalette, showShortcuts } from "./palette.js";
+import { newTicketDialog } from "./views/ticket.js";
 import { avatar, busy, clear, errorBox, field, h, label, modal, spinner, toast } from "./ui.js";
 import { renderDashboard } from "./views/dashboard.js";
 import { renderTickets } from "./views/tickets.js";
@@ -107,73 +110,125 @@ function highlightNav(path) {
 }
 
 // ----------------------------------------------------------------------------- shell
-function renderShell() {
-  const items = [
-    ["/", "Dashboard", "M3 13h8V3H3zm10 8h8V11h-8zM3 21h8v-6H3zm10-18v6h8V3z"],
-    ["/tickets", "Tickets", "M4 6h16M4 12h16M4 18h10"],
-    ["/projects", "Projects", "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"],
-    ["/docs", "Docs", "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 13h6M9 17h6M9 9h2"],
-    ["/timeline", "Timeline", "M3 4h18v17H3zM3 9h18M8 2v4M16 2v4M7 13h5M10 17h7"],
-    ["/releases", "Releases", "M4.5 16.5c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.8.7-2.1-.1-2.9a2.2 2.2 0 0 0-2.9-.1zM12 15l-3-3a22 22 0 0 1 2-3.9A12.9 12.9 0 0 1 22 2c0 2.7-.8 7.5-6 11a22.4 22.4 0 0 1-4 2zM9 12H4s.6-3 2-4c1.6-1.1 5 0 5 0m1 7v5s3-.6 4-2c1.1-1.6 0-5 0-5"],
-    ["/upcoming", "Upcoming", "M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4"],
-    ["/notifications", "Notifications", "M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10 21h4"],
+const SIDEBAR_KEY = "tickets.sidebar.collapsed";
+const isCollapsed = () => { try { return localStorage.getItem(SIDEBAR_KEY) === "1"; } catch { return false; } };
+
+function navSections() {
+  const sections = [
+    ["", [
+      { href: "/", label: "Dashboard", icon: "dashboard", keys: "G D" },
+      { href: "/tickets", label: "Tickets", icon: "tickets", keys: "G T" },
+      { href: "/projects", label: "Projects", icon: "folder", keys: "G P" },
+      { href: "/timeline", label: "Timeline", icon: "timeline", keys: "G L" },
+      { href: "/notifications", label: "Inbox", icon: "inbox", keys: "G N", badge: true },
+    ]],
+    ["Plan & ship", [
+      { href: "/upcoming", label: "Upcoming", icon: "clipboard", keys: "G U" },
+      { href: "/releases", label: "Releases", icon: "rocket", keys: "G R" },
+      { href: "/docs", label: "Docs", icon: "docs", keys: "G O" },
+    ]],
   ];
   if (isAdmin()) {
-    items.push(["/users", "People", "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8m13 10v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"]);
-    items.push(["/reports", "Reports", "M3 3v18h18M7 15l4-4 3 3 5-6"]);
-    items.push(["/integrations", "Slack", "M14.5 10a1.5 1.5 0 1 1 0-3h5a1.5 1.5 0 0 1 0 3zM10 9.5a1.5 1.5 0 1 1-3 0v-5a1.5 1.5 0 0 1 3 0zM9.5 14a1.5 1.5 0 1 1 0 3h-5a1.5 1.5 0 0 1 0-3zM14 14.5a1.5 1.5 0 1 1 3 0v5a1.5 1.5 0 0 1-3 0z"]);
+    sections.push(["Admin", [
+      { href: "/users", label: "People", icon: "users" },
+      { href: "/reports", label: "Reports", icon: "chart" },
+      { href: "/integrations", label: "Slack", icon: "hash" },
+    ]]);
   }
-  const icon = (d) => {
-    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.setAttribute("viewBox", "0 0 24 24");
-    svg.setAttribute("aria-hidden", "true");
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute("d", d);
-    svg.append(path);
-    return svg;
-  };
+  return sections;
+}
 
-  bell = notificationBell();
-  const search = h("input", {
-    type: "search", placeholder: "Jump to ticket (PAY-12) or search…", "aria-label": "Search tickets",
-    onkeydown: (e) => {
-      if (e.key !== "Enter") return;
-      const q = e.target.value.trim();
-      if (!q) return;
-      e.target.value = "";
-      navigate(/^[A-Za-z][A-Za-z0-9]{1,9}-\d+$/.test(q) ? `/tickets/${q.toUpperCase()}` : `/tickets?q=${encodeURIComponent(q)}`);
-    },
+async function newTicketAnywhere() {
+  try {
+    const projects = (await api.get("/projects")).filter((p) => p.is_active);
+    if (!projects.length) { toast("You are not in any active project yet", "error"); return; }
+    const m = location.hash.match(/#\/projects\/(\d+)/);
+    newTicketDialog(projects, m ? Number(m[1]) : undefined);
+  } catch (err) { toast(err.message, "error"); }
+}
+
+function renderShell() {
+  const sections = navSections();
+  configurePalette({
+    nav: sections.flatMap(([, items]) => items), newTicket: newTicketAnywhere, changePassword, logout, navigate,
   });
+  bell = notificationBell();
+  if (isCollapsed()) document.body.classList.add("nav-collapsed");
+
+  const u = auth.user;
+  const accountMenu = h("div.menu.account-menu",
+    h("div.menu-head", h("strong", u.name), h("span.muted.small", u.email), u.designation && h("span.muted.small", u.designation)),
+    h("div.menu-theme", h("span.muted.small", "Theme"),
+      h("div.chips.seg", [["system", "System", "monitor"], ["light", "Light", "sun"], ["dark", "Dark", "moon"]].map(([v, text, ic]) => h("button.chip", {
+        type: "button", "aria-pressed": String(getTheme() === v), dataset: { theme: v }, title: text,
+        onclick: (e) => { e.stopPropagation(); setTheme(v); },
+      }, icon(ic, { size: 14 }), text)))),
+    h("button", { onclick: () => { closeAccount(); showShortcuts(); } }, icon("keyboard"), "Keyboard shortcuts", h("kbd.menu-kbd", "?")),
+    h("button", { onclick: () => { closeAccount(); changePassword(); } }, icon("key"), "Change password"),
+    h("button", { onclick: logout }, icon("logout"), "Log out"));
+  const account = h("div.dropdown.account",
+    h("button.account-btn", {
+      type: "button", "aria-haspopup": "true", "aria-label": "Account menu",
+      onclick: (e) => { e.stopPropagation(); account.classList.toggle("open"); },
+    }, avatar(u), h("span.account-text", h("strong", u.name), h("span", isAdmin() ? "Administrator" : u.designation || "Member")), icon("chevron-down", { size: 14, cls: "account-caret" })),
+    accountMenu);
+  const closeAccount = () => account.classList.remove("open");
+  document.addEventListener("click", (e) => { if (!account.contains(e.target)) closeAccount(); });
+
+  const collapseBtn = h("button.icon-btn.collapse-btn", {
+    type: "button", title: "Collapse sidebar", "aria-label": "Collapse sidebar",
+    onclick: () => {
+      const on = !document.body.classList.contains("nav-collapsed");
+      document.body.classList.toggle("nav-collapsed", on);
+      try { localStorage.setItem(SIDEBAR_KEY, on ? "1" : "0"); } catch { /* per-viewer only */ }
+    },
+  }, icon("chevrons-left"));
+
+  const navLink = (it) => h("a.nav-link", { href: `#${it.href}`, title: it.label, dataset: { href: it.href } },
+    icon(it.icon, { size: 18 }), h("span.nav-text", it.label),
+    it.badge ? h("span.nav-badge", { hidden: true }) : null);
 
   clear(root,
     h("div.shell",
       h("aside.sidebar",
-        h("a.brand", { href: "#/" }, h("span.logo", "T"), h("span", "Tickets")),
-        h("nav.nav", { "aria-label": "Main" }, items.map(([href, text, d]) => h("a", { href: `#${href}` }, icon(d), h("span", text)))),
-        h("div.sidebar-foot", h("span.muted.small", isAdmin() ? "Signed in as admin" : "")),
-      ),
+        h("div.sidebar-top",
+          h("a.brand", { href: "#/" }, h("span.logo", icon("tickets", { size: 16 })), h("span.brand-text", "Tickets")),
+          collapseBtn),
+        h("button.sidebar-search", { type: "button", onclick: () => openPalette() },
+          icon("search", { size: 16 }), h("span.nav-text", "Search"), h("span.nav-text.kbd-hint", h("kbd", MOD), h("kbd", "K"))),
+        h("nav.nav", { "aria-label": "Main" }, sections.map(([title, items]) => h("div.nav-section",
+          title ? h("div.nav-title", title) : null, items.map(navLink)))),
+        h("div.sidebar-foot", account)),
       h("div.content",
         h("header.topbar",
-          h("button.icon-btn.menu-btn", { "aria-label": "Menu", onclick: () => document.body.classList.toggle("nav-open") }, "☰"),
-          h("div.search", search),
-          themeButton(),
-          bell.el,
-          userMenu(),
-        ),
-        h("main#main", { tabindex: "-1" }),
-      ),
-      h("div.nav-scrim", { onclick: () => document.body.classList.remove("nav-open") }),
-    ),
-  );
+          h("button.icon-btn.menu-btn", { "aria-label": "Menu", onclick: () => document.body.classList.toggle("nav-open") }, icon("menu", { size: 18 })),
+          h("button.top-search", { type: "button", onclick: () => openPalette() },
+            icon("search", { size: 16 }), h("span", "Search or jump to…"), h("span.kbd-hint", h("kbd", MOD), h("kbd", "K"))),
+          h("div.topbar-actions",
+            h("button.btn.primary.sm.new-btn", { type: "button", onclick: newTicketAnywhere, title: "Create ticket (C)" }, icon("plus", { size: 15 }), h("span", "New ticket")),
+            h("button.icon-btn", { type: "button", title: "Keyboard shortcuts (?)", "aria-label": "Keyboard shortcuts", onclick: showShortcuts }, icon("keyboard", { size: 18 })),
+            themeButton(),
+            bell.el)),
+        h("main#main", { tabindex: "-1" })),
+      h("div.nav-scrim", { onclick: () => document.body.classList.remove("nav-open") })));
+
+  // Mirror the unread count onto the sidebar "Inbox" item.
+  const badge = root.querySelector(".nav-badge");
+  const count = bell.el.querySelector(".count");
+  if (badge && count) {
+    const sync = () => { badge.hidden = count.hidden; badge.textContent = count.textContent; };
+    new MutationObserver(sync).observe(count, { attributes: true, childList: true, characterData: true, subtree: true });
+    sync();
+  }
 }
 
 const THEME_CYCLE = { system: "light", light: "dark", dark: "system" };
-const THEME_ICON = { system: "🖥", light: "☀️", dark: "🌙" };
+const THEME_ICON = { system: "monitor", light: "sun", dark: "moon" };
 function themeButton() {
   const btn = h("button.icon-btn.theme-btn", { type: "button", onclick: () => setTheme(THEME_CYCLE[getTheme()]) });
   const sync = () => {
     const t = getTheme();
-    btn.textContent = THEME_ICON[t];
+    btn.replaceChildren(icon(THEME_ICON[t], { size: 18 }));
     btn.title = `Theme: ${t} (click for ${THEME_CYCLE[t]})`;
     btn.setAttribute("aria-label", btn.title);
     document.querySelectorAll(".menu-theme .chip").forEach((c) => c.setAttribute("aria-pressed", String(c.dataset.theme === t)));
@@ -184,26 +239,6 @@ function themeButton() {
 }
 // Redraw the current page so charts, diagrams and code colours follow the new theme.
 onThemeChange(() => { if (auth.user && document.getElementById("main")) route(); });
-
-function userMenu() {
-  const u = auth.user;
-  const menu = h("div.menu",
-    h("div.menu-head", h("strong", u.name), h("span.muted.small", u.email), u.designation && h("span.muted.small", u.designation)),
-    h("div.menu-theme", h("span.muted.small", "Theme"),
-      h("div.chips.seg", [["system", "System"], ["light", "Light"], ["dark", "Dark"]].map(([v, text]) => h("button.chip", {
-        type: "button", "aria-pressed": String(getTheme() === v), dataset: { theme: v },
-        onclick: (e) => { setTheme(v); e.currentTarget.parentElement.querySelectorAll(".chip").forEach((c) => c.setAttribute("aria-pressed", String(c === e.currentTarget))); },
-      }, text)))),
-    h("button", { onclick: () => { close(); changePassword(); } }, "Change password"),
-    h("button", { onclick: logout }, "Log out"),
-  );
-  const wrap = h("div.dropdown",
-    h("button.avatar-btn", { "aria-label": "Account menu", "aria-haspopup": "true", onclick: (e) => { e.stopPropagation(); wrap.classList.toggle("open"); } }, avatar(u)),
-    menu);
-  const close = () => wrap.classList.remove("open");
-  document.addEventListener("click", (e) => { if (!wrap.contains(e.target)) close(); });
-  return wrap;
-}
 
 function changePassword() {
   const form = h("form.form",
@@ -264,7 +299,7 @@ function renderLogin(message) {
   clear(root,
     h("div.login",
       h("div.login-card",
-        h("div.brand.center", h("span.logo", "T"), h("span", "Developer Ticket System")),
+        h("div.brand.center", h("span.logo", icon("tickets", { size: 22 })), h("span", "Developer Ticket System")),
         h("p.muted.center", "Sign in with your work e-mail."),
         form,
       )));
@@ -285,6 +320,7 @@ setUnauthorizedHandler(() => {
 });
 
 window.addEventListener("hashchange", route);
+installShortcuts();
 
 (async function boot() {
   if (!auth.token) return renderLogin();

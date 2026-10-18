@@ -1,3 +1,4 @@
+import { icon } from "./icons.js";
 // DOM helpers, formatting and shared widgets. No framework: views build elements with h().
 
 export const STATUSES = ["todo", "in_progress", "blocked", "in_review", "done", "verified"];
@@ -138,12 +139,14 @@ export function avatar(user, size = "") {
 export const userChip = (user) =>
   user ? h("span.user-chip", avatar(user, "sm"), h("span", user.name)) : h("span.muted", "Unassigned");
 
-export function spinner() {
-  return h("div.loading", h("span.spin"), "Loading…");
+/** Loading placeholder: shimmering skeleton lines (reads calmer than a spinner). */
+export function spinner(lines = 4) {
+  return h("div.skeleton-block", { role: "status", "aria-label": "Loading" },
+    Array.from({ length: lines }, (_, i) => h("div.skeleton", { style: { width: `${[92, 76, 84, 60, 70][i % 5]}%` } })));
 }
 
-export function emptyState(title, text, action) {
-  return h("div.empty", h("strong", title), text && h("p", text), action);
+export function emptyState(title, text, action, iconName = "inbox") {
+  return h("div.empty", h("span.empty-icon", icon(iconName, { size: 22 })), h("strong", title), text && h("p", text), action);
 }
 
 export function errorBox(err) {
@@ -183,10 +186,13 @@ export { markdownEditor, renderMarkdown } from "./markdown.js";
 
 // ----------------------------------------------------------------------------- toasts
 export function toast(message, kind = "ok") {
-  const el = h(`div.toast.${kind}`, { role: kind === "error" ? "alert" : "status" }, message);
+  const dismiss = () => { el.classList.add("out"); setTimeout(() => el.remove(), 250); };
+  const el = h(`div.toast.${kind}`, { role: kind === "error" ? "alert" : "status" },
+    icon(kind === "error" ? "x-circle" : "check-circle", { size: 16, cls: "toast-icon" }),
+    h("span.toast-text", message),
+    h("button.toast-close", { type: "button", "aria-label": "Dismiss", onclick: dismiss }, icon("x", { size: 14 })));
   document.getElementById("toasts").append(el);
-  setTimeout(() => el.classList.add("out"), 3500);
-  setTimeout(() => el.remove(), 4000);
+  setTimeout(dismiss, kind === "error" ? 6000 : 3500);
 }
 
 /** Run an async action from a button; disables it and reports errors as toasts. */
@@ -207,7 +213,7 @@ export function modal(title, body, { wide = false } = {}) {
   const close = () => { backdrop.remove(); document.removeEventListener("keydown", onKey); };
   const onKey = (e) => { if (e.key === "Escape") close(); };
   const dialog = h(`div.modal${wide ? ".wide" : ""}`, { role: "dialog", "aria-modal": "true", "aria-label": title },
-    h("header", h("h2", title), h("button.icon-btn", { "aria-label": "Close", onclick: close }, "✕")),
+    h("header", h("h2", title), h("button.icon-btn", { "aria-label": "Close", onclick: close }, icon("x", { size: 18 }))),
     h("div.modal-body", body),
   );
   const backdrop = h("div.backdrop", { onmousedown: (e) => { if (e.target === backdrop) close(); } }, dialog);
