@@ -363,6 +363,8 @@ setUnauthorizedHandler(() => {
 window.addEventListener("hashchange", route);
 installShortcuts();
 
+window.__appStarted = true;
+
 (async function boot() {
   if (!auth.token) return renderLogin();
   clear(root, spinner());

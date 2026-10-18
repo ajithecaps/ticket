@@ -17,6 +17,26 @@
   <script src="/static/vendor/marked.min.js"></script>
   <script src="/static/vendor/marked-footnote.umd.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
+  <script>
+    // If the app's code fails to load (e.g. a file missing on the server), say so instead of showing a blank page.
+    window.__appFailed = function (detail) {
+      var el = document.getElementById("app");
+      if (!el || el.childElementCount) return;
+      el.innerHTML = '<div style="max-width:520px;margin:15vh auto;padding:24px;font:15px/1.5 system-ui,sans-serif;color:#344054">'
+        + '<h1 style="font-size:20px;margin:0 0 8px">The app failed to load</h1>'
+        + '<p style="margin:0 0 12px">A file the page needs could not be loaded. Try a hard refresh (Ctrl/Cmd + Shift + R). '
+        + 'If it keeps happening, the server is probably missing a file from the latest release.</p>'
+        + '<pre style="white-space:pre-wrap;background:#f2f4f7;padding:10px;border-radius:8px;font-size:12px;color:#b42318"></pre></div>';
+      el.querySelector("pre").textContent = detail || "Unknown error";
+    };
+    window.addEventListener("error", function (e) {
+      var src = e.target && (e.target.src || e.target.href);
+      if (src) window.__appFailed("Could not load " + src);
+    }, true);
+    window.addEventListener("unhandledrejection", function (e) { if (!window.__appStarted) window.__appFailed(String(e.reason)); });
+    // Module import errors (missing or broken files) don't fire the events above; check after load.
+    window.addEventListener("load", function () { setTimeout(function () { if (!window.__appStarted) window.__appFailed("The application script did not start. Open the browser console for details."); }, 4000); });
+  </script>
   <script type="module" src="/static/js/app.js"></script>
 </body>
 </html>
