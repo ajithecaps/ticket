@@ -8,6 +8,7 @@ from sqlalchemy import and_, case, func, not_, or_, select
 
 from ..deps import CurrentUser, DbSession
 from ..models import (
+    ProjectRole,
     CLOSED_STATUSES,
     ReleaseStatus,
     PRIORITY_RANK,
@@ -269,11 +270,15 @@ def list_tickets(
     db: DbSession,
     f: Filters,
     project_id: int | None = Query(None, description="Only this project"),
+    owned: bool = Query(False, description="Only projects I own (admins: every project)"),
 ):
     """Admin: every ticket in the system. Others: tickets of the projects they belong to."""
     stmt = _visible(user)
     if project_id is not None:
         stmt = stmt.where(Ticket.project_id == project_id)
+    if owned and not is_admin(user):
+        stmt = stmt.where(Ticket.project_id.in_(select(ProjectMember.project_id).where(
+            ProjectMember.user_id == user.id, ProjectMember.role == ProjectRole.OWNER)))
     return _page(db, _apply_filters(stmt, f), f)
 
 

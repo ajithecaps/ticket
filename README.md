@@ -278,6 +278,11 @@ change it in place, **saved views** and **CSV export** of everything that matche
 are remembered per browser. API sort keys: `created_at, updated_at, due_date, start_date, priority,
 status, title, key, assignee` with `order=asc|desc`.
 
+**Needs attention** (sidebar, with live counts): **To verify** - tickets marked done and waiting for an
+owner's check; **Overdue** - open tickets past their due date, grouped by assignee; **Unassigned** - open
+tickets nobody has. Each is the full ticket table with that filter fixed. To verify and Unassigned are for
+project owners and admins (scoped with `GET /tickets?owned=true`); Overdue is for everyone.
+
 **Navigation & shortcuts:** the sidebar groups Work / Plan & ship / Admin and collapses to icons; the
 command palette (**⌘K / Ctrl+K**, or **/**) finds tickets, docs, projects and people and runs actions.
 Shortcuts: **C** new ticket, **G** then **D/T/P/L/O/R/U/N** to jump, **?** for the list.

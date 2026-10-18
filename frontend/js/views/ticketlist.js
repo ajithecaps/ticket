@@ -97,11 +97,13 @@ function downloadCsv(filename, rows) {
 
 /**
  * Filterable, paginated ticket list bound to the URL query string.
- * opts: endpoint, assignees [[value, text]], extraParams, showProject, prefsKey (separate layout per page).
+ * opts: endpoint, assignees [[value, text]], extraParams, showProject, prefsKey (separate layout per page),
+ * lockedParams (always sent, override the filters; the matching controls are hidden), defaultGroup.
  */
 export function filteredTicketList(opts) {
   const prefsKey = opts.prefsKey || (opts.showProject === false ? "project" : "all");
-  const prefs = { columns: null, density: "comfortable", pageSize: 25, group: "", views: [], ...loadPrefs(prefsKey) };
+  const prefs = { columns: null, density: "comfortable", pageSize: 25, group: opts.defaultGroup || "", views: [], ...loadPrefs(prefsKey) };
+  const locked = opts.lockedParams || {};
   const allowed = COLUMNS.filter((c) => opts.showProject !== false || c.id !== "project");
   let columns = (prefs.columns || DEFAULT_COLUMNS).filter((id) => allowed.some((c) => c.id === id));
   const persist = () => savePrefs(prefsKey, { ...prefs, columns });
@@ -130,7 +132,7 @@ export function filteredTicketList(opts) {
 
   // ------------------------------------------------------------- filters
   const statusChips = h("div.chips", { role: "group", "aria-label": "Status" },
-    STATUSES.map((s) => h("button.chip", {
+    (opts.statusOptions || STATUSES).map((s) => h("button.chip", {
       type: "button", "aria-pressed": String(state.status.includes(s)), dataset: { status: s },
       onclick: (e) => {
         state.status = state.status.includes(s) ? state.status.filter((x) => x !== s) : [...state.status, s];
@@ -247,7 +249,7 @@ export function filteredTicketList(opts) {
     if (state.assignee === "me") p.assignee_id = auth.user.id;
     else if (state.assignee === "none") p.unassigned = true;
     else if (state.assignee) p.assignee_id = state.assignee;
-    return p;
+    return { ...p, ...locked };
   }
 
   async function load() {
@@ -443,11 +445,12 @@ export function filteredTicketList(opts) {
   load();
   return h("div.ticket-list",
     h("div.card.filters-card",
-      h("div.filters", search, prioritySel, typeSel, assigneeSel,
-        h("label.check", overdueBox, "Overdue"),
-        h("label.check", { title: "Include tickets that were moved into a release" }, releasedBox, "Show released"),
+      h("div.filters", search, prioritySel, typeSel,
+        !("unassigned" in locked) && assigneeSel,
+        !("overdue" in locked) && h("label.check", overdueBox, "Overdue"),
+        !("in_release" in locked) && h("label.check", { title: "Include tickets that were moved into a release" }, releasedBox, "Show released"),
         clearBtn),
-      statusChips),
+      !("status" in locked) && statusChips),
     h("div.list-toolbar", summary, h("div.row.wrap.list-tools", h("label.inline", "Group", groupSel), columnsWrap, viewsWrap, densityBtn, sizeSel, exportBtn)),
     bulkBar,
     tableBox,

@@ -1129,3 +1129,17 @@ def test_ticket_sorting_options(client, world):
     rows = client.get(f"{API}/projects/{pay['id']}/tickets", headers=ravi["headers"], params={"sort": "assignee", "order": "asc", "limit": 200}).json()["items"]
     names = [t["assignee"]["name"].lower() for t in rows if t["assignee"]]
     assert names == sorted(names) and all(t["assignee"] is None for t in rows[len(names):])
+
+
+def test_owned_ticket_filter(client, admin, world):
+    ravi, kiran, pay, ops = world["ravi"], world["kiran"], world["pay"], world["ops"]
+    # Kiran owns nothing: "owned" returns nothing for him, while normal lists still show his projects
+    assert client.get(f"{API}/tickets", headers=kiran["headers"], params={"owned": True}).json()["total"] == 0
+    # Ravi owns PAY and OPS; admin sees everything
+    mine = {p["id"] for p in client.get(f"{API}/projects", headers=ravi["headers"], params={"include_archived": True}).json()
+            if p["my_role"] == "owner"}
+    owned = client.get(f"{API}/tickets", headers=ravi["headers"], params={"owned": True, "limit": 200}).json()
+    assert {t["project"]["id"] for t in owned["items"]} <= mine and owned["total"] > 0
+    # a project where he is only a developer is left out
+    assert client.get(f"{API}/tickets", headers=kiran["headers"], params={"owned": True, "project_id": pay["id"]}).json()["total"] == 0
+    assert client.get(f"{API}/tickets", headers=admin, params={"owned": True}).json()["total"] >= owned["total"]

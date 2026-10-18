@@ -17,6 +17,7 @@ import { renderUpcomingDetail, renderUpcomingPage } from "./views/upcoming.js";
 import { renderReleaseDetail, renderReleasesPage } from "./views/releases.js";
 import { renderTimeline } from "./views/timeline.js";
 import { renderDocEditor, renderDocHistory, renderDocPage, renderDocsHome } from "./views/docs.js";
+import { ATTENTION, attentionCounts, renderAttention } from "./views/attention.js";
 
 const root = document.getElementById("app");
 const isAdmin = () => auth.user?.role === "admin";
@@ -37,6 +38,7 @@ const routes = [
   [/^\/upcoming\/(\d+)$/, (el, [id]) => renderUpcomingDetail(el, Number(id))],
   [/^\/releases$/, renderReleasesPage],
   [/^\/timeline$/, (el) => renderTimeline(el)],
+  [/^\/(verify|overdue|unassigned)$/, (el, [kind]) => renderAttention(el, kind)],
   [/^\/docs$/, (el) => renderDocsHome(el)],
   [/^\/docs\/new$/, (el) => renderDocEditor(el, null)],
   [/^\/docs\/(\d+)$/, (el, [id]) => renderDocPage(el, Number(id))],
@@ -94,6 +96,7 @@ async function route() {
     }
     main.focus({ preventScroll: true });
     window.scrollTo(0, 0);
+    refreshAttention().catch(() => {});
     return;
   }
   clear(main, h("div.empty", h("strong", "Page not found"), h("p", h("a", { href: "#/" }, "Back to dashboard"))));
@@ -122,6 +125,9 @@ function navSections() {
       { href: "/timeline", label: "Timeline", icon: "timeline", keys: "G L" },
       { href: "/notifications", label: "Inbox", icon: "inbox", keys: "G N", badge: true },
     ]],
+    ["Needs attention", Object.entries(ATTENTION).map(([key, c]) => ({
+      href: `/${key}`, label: c.title, icon: c.icon, attention: key, ownerOnly: c.ownerOnly,
+    }))],
     ["Plan & ship", [
       { href: "/upcoming", label: "Upcoming", icon: "clipboard", keys: "G U" },
       { href: "/releases", label: "Releases", icon: "rocket", keys: "G R" },
@@ -184,9 +190,12 @@ function renderShell() {
     },
   }, icon("chevrons-left"));
 
-  const navLink = (it) => h("a.nav-link", { href: `#${it.href}`, title: it.label, dataset: { href: it.href } },
-    icon(it.icon, { size: 18 }), h("span.nav-text", it.label),
-    it.badge ? h("span.nav-badge", { hidden: true }) : null);
+  const navLink = (it) => h("a.nav-link", {
+    href: `#${it.href}`, title: it.label, dataset: { href: it.href, attention: it.attention || "" }, hidden: Boolean(it.ownerOnly),
+  },
+  icon(it.icon, { size: 18 }), h("span.nav-text", it.label),
+  it.badge ? h("span.nav-badge", { hidden: true }) : null,
+  it.attention ? h(`span.nav-count.att-${it.attention}`, { hidden: true }) : null);
 
   clear(root,
     h("div.shell",
@@ -212,6 +221,22 @@ function renderShell() {
         h("main#main", { tabindex: "-1" })),
       h("div.nav-scrim", { onclick: () => document.body.classList.remove("nav-open") })));
 
+  // Owners/admins also get "To verify" and "Unassigned"; then fill in the attention counts.
+  (async () => {
+    try {
+      const projects = await api.get("/projects");
+      attentionOwner = isAdmin() || projects.some((p) => p.my_role === "owner");
+    } catch { attentionOwner = isAdmin(); }
+    root.querySelectorAll(".nav-link[data-attention]").forEach((a) => {
+      if (a.dataset.attention && ATTENTION[a.dataset.attention].ownerOnly) a.hidden = !attentionOwner;
+    });
+    configurePalette({
+      nav: sections.flatMap(([, items]) => items).filter((it) => !it.ownerOnly || attentionOwner),
+      newTicket: newTicketAnywhere, changePassword, logout, navigate,
+    });
+    refreshAttention();
+  })();
+
   // Mirror the unread count onto the sidebar "Inbox" item.
   const badge = root.querySelector(".nav-badge");
   const count = bell.el.querySelector(".count");
@@ -220,6 +245,22 @@ function renderShell() {
     new MutationObserver(sync).observe(count, { attributes: true, childList: true, characterData: true, subtree: true });
     sync();
   }
+}
+
+let attentionOwner = false;
+let attentionTimer = null;
+/** Update the "Needs attention" counts in the sidebar (on navigation and every minute). */
+async function refreshAttention() {
+  clearTimeout(attentionTimer);
+  if (!auth.user) return;
+  const counts = await attentionCounts(attentionOwner);
+  Object.entries(counts).forEach(([key, n]) => {
+    const el = document.querySelector(`.nav-count.att-${key}`);
+    if (!el) return;
+    el.hidden = !n;
+    el.textContent = n > 99 ? "99+" : String(n ?? "");
+  });
+  attentionTimer = setTimeout(refreshAttention, 60_000);
 }
 
 const THEME_CYCLE = { system: "light", light: "dark", dark: "system" };

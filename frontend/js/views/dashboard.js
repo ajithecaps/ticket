@@ -94,7 +94,6 @@ export async function renderDashboard(main) {
   const state = { days: 30, project: "" };
   const projects = await api.get("/projects");
   const owned = projects.filter((p) => p.my_role === "owner" || p.my_role === "admin");
-  const ownedIds = new Set(owned.map((p) => p.id));
   const body = h("div.dash-body");
 
   const periodChips = h("div.chips.seg", PERIODS.map(([d, text]) => h("button.chip", {
@@ -111,15 +110,9 @@ export async function renderDashboard(main) {
   async function load() {
     clear(body, spinner());
     const params = { days: state.days, project_id: state.project || undefined };
-    const inScope = (t) => ownedIds.has(t.project.id) && (!state.project || String(t.project.id) === state.project);
-    const [d, mine, extra] = await Promise.all([
+    const [d, mine] = await Promise.all([
       api.get("/dashboard", params),
       api.get("/tickets/my", { status: OPEN, sort: "due_date", order: "asc", limit: 8, project_id: state.project || undefined }),
-      owned.length ? Promise.all([
-        api.get("/tickets", { status: "done", sort: "updated_at", order: "asc", limit: 50, in_release: false }),
-        api.get("/tickets", { overdue: true, sort: "due_date", order: "asc", limit: 200 }),
-        api.get("/tickets", { unassigned: true, status: ["todo", "blocked"], sort: "priority", limit: 20 }),
-      ]) : null,
     ]);
     const k = d.kpis;
     const labels = d.trend.map((p) => p.date);
@@ -130,12 +123,12 @@ export async function renderDashboard(main) {
     const tiles = h("section.kpis",
       kpi({ label: "Open tickets", value: k.open, href: `#/tickets?${projQs.slice(1)}`, hint: `${k.unassigned} unassigned` }),
       kpi({ label: "In progress", value: k.in_progress, href: "#/tickets?status=in_progress", hint: k.blocked ? `${k.blocked} blocked` : "none blocked", tone: k.blocked ? "warn" : "" }),
-      kpi({ label: "Overdue", value: k.overdue, href: "#/tickets?overdue=1", tone: k.overdue ? "danger" : "good", hint: k.overdue ? "past their due date" : "nothing late" }),
+      kpi({ label: "Overdue", value: k.overdue, href: "#/overdue", tone: k.overdue ? "danger" : "good", hint: k.overdue ? "past their due date" : "nothing late" }),
       kpi({ label: "Due in 7 days", value: k.due_week, hint: "open, with a due date" }),
       kpi({ label: `Completed · ${state.days}d`, value: k.completed, spark: sparkline(completedSeries, { color: "var(--series-2)" }), delta: deltaChip(k.completed, k.completed_prev, state.days, true) }),
       kpi({ label: `Created · ${state.days}d`, value: k.created, spark: sparkline(createdSeries), delta: deltaChip(k.created, k.created_prev, state.days, null) }),
       kpi({ label: "Avg. cycle time", value: k.avg_cycle_days === null ? null : `${k.avg_cycle_days}d`, hint: "start → done, completed in period" }),
-      kpi({ label: "Awaiting verification", value: k.awaiting_verification, href: "#/tickets?status=done", tone: k.awaiting_verification ? "accent" : "", hint: "done, not yet verified" }));
+      kpi({ label: "Awaiting verification", value: k.awaiting_verification, href: owned.length ? "#/verify" : "#/tickets?status=done", tone: k.awaiting_verification ? "accent" : "", hint: "done, not yet verified" }));
 
     const trendCard = h("section.card.dash-trend",
       h("div.card-head", h("div", h("h2", "Created vs completed"), h("p.muted.small", `Tickets per day, last ${state.days} days`))),
@@ -208,28 +201,11 @@ export async function renderDashboard(main) {
       h("div.card-head", h("h2", "My open work"), h("a.small", { href: "#/tickets?assignee=me" }, "See all")),
       ticketTable(mine.items, { showProject: true }));
 
-    let ownerSections = [];
-    if (extra) {
-      const [toVerify, overdue, unassigned] = extra;
-      const verifyItems = toVerify.items.filter(inScope);
-      ownerSections = [
-        verifyItems.length > 0 && h("section.card.flush.highlight",
-          h("div.card-head", h("h2", "Waiting for your verification ", h("span.badge.accent", String(verifyItems.length))), h("a.small", { href: "#/tickets?status=done" }, "See all")),
-          h("p.muted.small.card-sub", "Developers marked these done. Check the work, then verify it or send it back."),
-          ticketTable(verifyItems.slice(0, 10))),
-        overdueSection(overdue.items.filter(inScope), isAdmin),
-        unassigned.items.filter(inScope).length > 0 && h("section.card.flush",
-          h("div.card-head", h("h2", "Needs an assignee"), h("a.small", { href: "#/tickets?assignee=none" }, "See all")),
-          ticketTable(unassigned.items.filter(inScope).slice(0, 8))),
-      ];
-    }
-
     clear(body,
       tiles,
       h("div.dash-grid", trendCard, mixCard),
       workloadCard ? h("div.dash-grid", workloadCard, h("div.dash-stack", dueCard, releaseCard)) : h("div.dash-grid.even", dueCard, releaseCard || feedCard),
-      h("div.dash-grid", mineCard, workloadCard ? feedCard : (releaseCard ? feedCard : null)),
-      ownerSections);
+      h("div.dash-grid", mineCard, workloadCard ? feedCard : (releaseCard ? feedCard : null)));
   }
 
   const first = auth.user.name.split(/\s+/)[0];
@@ -241,41 +217,4 @@ export async function renderDashboard(main) {
       h("div.actions", projectSel, periodChips)),
     body);
   await load();
-}
-
-/** Overdue tickets with a per-person filter (chips show each assignee's overdue count). */
-function overdueSection(items, isAdmin) {
-  const people = new Map();
-  for (const t of items) {
-    const key = t.assignee ? String(t.assignee.id) : "none";
-    const entry = people.get(key) || { user: t.assignee, count: 0 };
-    entry.count += 1;
-    people.set(key, entry);
-  }
-  const ranked = [...people.entries()].sort((a, b) => b[1].count - a[1].count);
-  let selected = "";
-  const chips = h("div.chips.person-chips", { role: "group", "aria-label": "Filter overdue tickets by person" });
-  const table = h("div");
-  const link = h("a.small", "Open in Tickets");
-
-  function draw() {
-    clear(chips,
-      h("button.chip", { type: "button", "aria-pressed": String(selected === ""), onclick: () => { selected = ""; draw(); } }, `Everyone · ${items.length}`),
-      ranked.map(([key, { user, count }]) => h("button.chip.person", {
-        type: "button", "aria-pressed": String(selected === key), onclick: () => { selected = key; draw(); },
-      }, avatar(user, "sm"), user ? user.name : "Unassigned", h("strong", String(count)))));
-    const shown = selected === "" ? items : items.filter((t) => (t.assignee ? String(t.assignee.id) : "none") === selected);
-    clear(table, ticketTable(shown.slice(0, 25)));
-    link.href = `#/tickets?overdue=1${selected ? `&assignee=${selected}` : ""}`;
-  }
-
-  if (!items.length) {
-    return h("section.card", h("div.card-head", h("h2", "Overdue tickets")), h("p.muted", "Nothing is overdue. 🎉"));
-  }
-  draw();
-  return h("section.card.flush",
-    h("div.card-head", h("h2", "Overdue tickets ", h("span.badge.danger", String(items.length))), link),
-    h("div.card-sub", isAdmin ? "Across every project. Pick a person to see only their overdue work." : "In the projects you own. Pick a person to filter."),
-    h("div.chip-row", chips),
-    table);
 }
