@@ -52,7 +52,7 @@ export function lineChart({ series, labels, height = 220, formatLabel = (l) => l
   const H = height;
   const pad = { l: 34, r: 12, t: 12, b: 26 };
   const n = labels.length;
-  const max = Math.max(1, ...series.flatMap((s) => s.values));
+  const max = Math.max(1, ...series.flatMap((s) => s.values.filter((v) => v !== null && v !== undefined)));
   const ticks = niceTicks(max);
   const top = ticks[ticks.length - 1];
   const x = (i) => pad.l + (n === 1 ? 0 : (i / (n - 1)) * (W - pad.l - pad.r));
@@ -62,15 +62,22 @@ export function lineChart({ series, labels, height = 220, formatLabel = (l) => l
     svg("line", { x1: pad.l, x2: W - pad.r, y1: y(t), y2: y(t), class: "c-grid" }),
     svg("text", { x: pad.l - 6, y: y(t) + 3.5, class: "c-axis", "text-anchor": "end" }, compact(t))));
   const every = Math.max(1, Math.ceil(n / 7));
-  const xlabels = labels.map((l, i) => (i % every === 0 || i === n - 1) && (i === n - 1 || n - 1 - i >= every / 2)
+  const xlabels = labels.map((l, i) => (i % every === 0 || i === n - 1) && (i === n - 1 || n - 1 - i >= Math.max(1, every * 0.75))
     ? svg("text", { x: x(i), y: H - 8, class: "c-axis", "text-anchor": i === 0 ? "start" : i === n - 1 ? "end" : "middle" }, formatLabel(l))
     : null);
 
-  const path = (vals) => vals.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
-  const lines = series.map((s, si) => svg("g", {},
-    si === 0 ? svg("path", { d: `${path(s.values)}L${x(n - 1)},${y(0)}L${x(0)},${y(0)}Z`, class: "c-area", style: `fill:${s.color}` }) : null,
-    svg("path", { d: path(s.values), class: "c-line", style: `stroke:${s.color}` }),
-    svg("circle", { cx: x(n - 1), cy: y(s.values[n - 1]), r: 4, class: "c-dot", style: `fill:${s.color}` })));
+  // null values leave a gap (e.g. future days of a burndown)
+  const has = (v) => v !== null && v !== undefined;
+  const path = (vals) => vals.map((v, i) => (has(v) ? `${i && has(vals[i - 1]) ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}` : "")).join("");
+  const lastIdx = (vals) => { for (let i = vals.length - 1; i >= 0; i -= 1) if (has(vals[i])) return i; return -1; };
+  const lines = series.map((s, si) => {
+    const li = lastIdx(s.values);
+    const area = si === 0 && !s.dashed && li > 0 && s.values.every((v, i) => i > li || has(v));
+    return svg("g", {},
+      area ? svg("path", { d: `${path(s.values)}L${x(li)},${y(0)}L${x(0)},${y(0)}Z`, class: "c-area", style: `fill:${s.color}` }) : null,
+      svg("path", { d: path(s.values), class: `c-line${s.dashed ? " c-dashed" : ""}`, style: `stroke:${s.color}` }),
+      li >= 0 && !s.dashed ? svg("circle", { cx: x(li), cy: y(s.values[li]), r: 4, class: "c-dot", style: `fill:${s.color}` }) : null);
+  });
 
   const cross = svg("line", { y1: pad.t, y2: H - pad.b, class: "c-cross", visibility: "hidden" });
   const hoverDots = series.map((s) => svg("circle", { r: 4.5, class: "c-dot", style: `fill:${s.color}`, visibility: "hidden" }));
@@ -84,9 +91,13 @@ export function lineChart({ series, labels, height = 220, formatLabel = (l) => l
     const px = ((ev.clientX - box.left) / box.width) * W;
     const i = Math.max(0, Math.min(n - 1, Math.round(((px - pad.l) / (W - pad.l - pad.r)) * (n - 1))));
     cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i)); cross.setAttribute("visibility", "visible");
-    hoverDots.forEach((d, si) => { d.setAttribute("cx", x(i)); d.setAttribute("cy", y(series[si].values[i])); d.setAttribute("visibility", "visible"); });
+    hoverDots.forEach((d, si) => {
+      const v = series[si].values[i];
+      if (!has(v)) { d.setAttribute("visibility", "hidden"); return; }
+      d.setAttribute("cx", x(i)); d.setAttribute("cy", y(v)); d.setAttribute("visibility", "visible");
+    });
     tip.show(ev, [h("div.chart-tip-head", formatLabel(labels[i], true)),
-      ...series.map((s) => h("div.chart-tip-row", h("i", { style: { background: s.color } }), h("span", s.name), h("strong", String(s.values[i]))))]);
+      ...series.map((s) => h("div.chart-tip-row", h("i", { style: { background: s.color } }), h("span", s.name), h("strong", has(s.values[i]) ? String(s.values[i]) : "—")))]);
   });
   hit.addEventListener("mouseleave", () => {
     cross.setAttribute("visibility", "hidden");

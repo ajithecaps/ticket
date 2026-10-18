@@ -1143,3 +1143,249 @@ def test_owned_ticket_filter(client, admin, world):
     # a project where he is only a developer is left out
     assert client.get(f"{API}/tickets", headers=kiran["headers"], params={"owned": True, "project_id": pay["id"]}).json()["total"] == 0
     assert client.get(f"{API}/tickets", headers=admin, params={"owned": True}).json()["total"] >= owned["total"]
+
+
+# --------------------------------------------------------------------------- #
+# Sprints
+# --------------------------------------------------------------------------- #
+def test_sprints(client, admin, world):
+    owner = make_user(client, admin, "Sam Scrum", "sam@example.com")
+    dev = make_user(client, admin, "Devi Dev", "devi@example.com")
+    outsider = make_user(client, admin, "Oscar Out", "oscar@example.com")
+    proj = client.post(f"{API}/projects", headers=admin, json={"name": "Sprinty", "key": "SPR", "owner_ids": [owner["id"]]}).json()
+    client.post(f"{API}/projects/{proj['id']}/members", headers=owner["headers"], json={"user_id": dev["id"]})
+    H = owner["headers"]
+
+    # only owners create; default names; dates validated
+    assert client.post(f"{API}/projects/{proj['id']}/sprints", headers=dev["headers"], json={}).status_code == 403
+    assert client.post(f"{API}/projects/{proj['id']}/sprints", headers=H, json={"start_date": iso(days=5), "end_date": iso(days=1)}).status_code == 400
+    s1 = client.post(f"{API}/projects/{proj['id']}/sprints", headers=H, json={"goal": "Ship login"}).json()
+    s2 = client.post(f"{API}/projects/{proj['id']}/sprints", headers=H, json={"name": "Hardening", "start_date": iso(days=14), "end_date": iso(days=27)}).json()
+    assert s1["name"] == "Sprint 1" and s1["status"] == "planned" and s1["can_manage"] is True
+    assert s2["days_total"] == 14
+
+    a = raise_ticket(client, H, proj["id"], title="Login form", assignee_id=dev["id"], estimated_hours=5)
+    b = raise_ticket(client, H, proj["id"], title="Password reset", assignee_id=dev["id"], sprint_id=s1["id"])
+    c = raise_ticket(client, H, proj["id"], title="Remember me", assignee_id=dev["id"])
+    assert b["sprint"]["name"] == "Sprint 1" and a["sprint"] is None
+    # developers cannot plan sprints
+    r = client.post(f"{API}/projects/{proj['id']}/tickets", headers=dev["headers"], json={"title": "x", "sprint_id": s1["id"]})
+    assert r.status_code == 403
+    assert client.patch(f"{API}/tickets/{c['id']}", headers=dev["headers"], json={"sprint_id": s1["id"]}).status_code == 403
+
+    # move tickets in (and back to the backlog)
+    r = client.post(f"{API}/projects/{proj['id']}/sprint-moves", headers=H, json={"ticket_ids": [a["id"], c["id"]], "sprint_id": s1["id"]})
+    assert r.json()["moved"] == 2
+    client.post(f"{API}/projects/{proj['id']}/sprint-moves", headers=H, json={"ticket_ids": [c["id"]], "sprint_id": None})
+    backlog = client.get(f"{API}/projects/{proj['id']}/tickets", headers=H, params={"backlog": True}).json()["items"]
+    assert [t["id"] for t in backlog] == [c["id"]]
+    in_s1 = client.get(f"{API}/projects/{proj['id']}/tickets", headers=H, params={"sprint_id": s1["id"]}).json()["items"]
+    assert {t["id"] for t in in_s1} == {a["id"], b["id"]}
+    acts = client.get(f"{API}/tickets/{c['id']}/activity", headers=H).json()
+    assert any(x["action"] == "sprint_moved" and x["old_value"] == "Sprint 1" for x in acts)
+
+    # start: defaults the dates, one active sprint at a time, members told
+    started = client.post(f"{API}/sprints/{s1['id']}/start", headers=H).json()
+    assert started["status"] == "active" and started["start_date"] and started["end_date"] and started["days_left"] == 13
+    assert client.post(f"{API}/sprints/{s2['id']}/start", headers=H).status_code == 409
+    n = client.get(f"{API}/notifications", headers=dev["headers"]).json()["items"][0]
+    assert n["type"] == "sprint" and "Sprint 1 started" in n["message"]
+    active = client.get(f"{API}/projects/{proj['id']}/tickets", headers=H, params={"active_sprint": True}).json()["items"]
+    assert {t["id"] for t in active} == {a["id"], b["id"]}
+    assert s1["id"] in [s["id"] for s in client.get(f"{API}/sprints/active", headers=dev["headers"]).json()]
+    assert client.get(f"{API}/sprints/{s1['id']}", headers=outsider["headers"]).status_code == 404
+
+    # finish one ticket, check the burndown, then complete: the open one moves to the next sprint
+    set_status(client, dev["headers"], b["id"], "in_progress")
+    set_status(client, dev["headers"], b["id"], "done")
+    bd = client.get(f"{API}/sprints/{s1['id']}/burndown", headers=dev["headers"]).json()
+    assert bd[0]["remaining"] == 1 and bd[0]["ideal"] == 2 and bd[-1]["remaining"] is None and bd[-1]["ideal"] == 0
+    assert client.post(f"{API}/sprints/{s1['id']}/complete", headers=dev["headers"], json={}).status_code == 403
+    done = client.post(f"{API}/sprints/{s1['id']}/complete", headers=H, json={"move_open_to": s2["id"]}).json()
+    assert done["status"] == "completed" and done["done_count"] == 1 and done["ticket_count"] == 1 and done["can_manage"] is False
+    assert client.get(f"{API}/tickets/{a['id']}", headers=H).json()["sprint"]["name"] == "Hardening"
+    n = client.get(f"{API}/notifications", headers=dev["headers"]).json()["items"][0]
+    assert "1 of 2 tickets done" in n["message"] and "moved to Hardening" in n["message"]
+
+    # completed sprints are locked
+    assert client.patch(f"{API}/sprints/{s1['id']}", headers=H, json={"name": "x"}).status_code == 400
+    assert client.post(f"{API}/projects/{proj['id']}/sprint-moves", headers=H, json={"ticket_ids": [c["id"]], "sprint_id": s1["id"]}).status_code == 400
+    assert client.post(f"{API}/projects/{proj['id']}/sprint-moves", headers=H, json={"ticket_ids": [b["id"]], "sprint_id": None}).status_code == 400
+    # deleting a planned sprint sends its tickets to the backlog
+    assert client.delete(f"{API}/sprints/{s2['id']}", headers=H).status_code == 204
+    assert client.get(f"{API}/tickets/{a['id']}", headers=H).json()["sprint"] is None
+    order = [s["status"] for s in client.get(f"{API}/projects/{proj['id']}/sprints", headers=dev["headers"]).json()]
+    assert order == ["completed"]
+
+
+# --------------------------------------------------------------------------- #
+# Slack settings from the admin panel
+# --------------------------------------------------------------------------- #
+def test_slack_config_from_panel(client, admin, world, monkeypatch):
+    import json as _json
+
+    from app import runtime_config, slack
+    from app.models import AppSetting
+    from app.database import SessionLocal
+
+    sent = []
+    monkeypatch.setattr(slack, "_request", lambda url, *, data, headers: (sent.append((url, _json.loads(data) if data else None)), (200, "ok", {}))[1])
+    kiran = world["kiran"]
+    assert client.put(f"{API}/integrations/slack/config", headers=kiran["headers"], json={"enabled": True}).status_code == 403
+
+    # validation
+    bad = client.put(f"{API}/integrations/slack/config", headers=admin, json={
+        "webhook_url": "http://evil.example.com/x", "daily_summary_time": "25:00", "timezone": "Mars/Base", "notify_types": ["nope"]})
+    assert bad.status_code == 422
+    for part in ("Webhook URL", "HH:MM", "time zone", "Unknown notification types"):
+        assert part in bad.json()["detail"]
+
+    hook = "https://hooks.slack.com/services/T000/B000/abcdefSECRET1234"
+    r = client.put(f"{API}/integrations/slack/config", headers=admin, json={
+        "enabled": True, "webhook_url": hook, "notify_types": ["assigned", "overdue"], "daily_summary_time": "09:30",
+        "daily_summary_days": ["fri", "mon"], "timezone": "Europe/London", "app_base_url": "https://tickets.acme.dev/"})
+    assert r.status_code == 200, r.text
+    st = r.json()
+    assert st["enabled"] and st["mode"] == "webhook" and st["webhook_url_masked"].endswith("1234") and "SECRET" not in st["webhook_url_masked"]
+    assert st["notify_types"] == ["assigned", "overdue"] and st["daily_summary_time"] == "09:30" and st["daily_summary_days"] == ["mon", "fri"]
+    assert st["timezone"] == "Europe/London" and st["app_base_url"] == "https://tickets.acme.dev"
+    assert st["sources"]["slack_webhook_url"] == "panel" and st["sources"]["slack_channel"] == "env"
+    # the secret is encrypted at rest
+    with SessionLocal() as db:
+        row = db.get(AppSetting, "slack_webhook_url")
+        assert row.is_secret and hook not in row.value and runtime_config.decrypt(row.value) == hook
+    # it is used right away (no restart): test message goes to the saved webhook
+    assert client.post(f"{API}/integrations/slack/test", headers=admin).status_code == 200
+    assert sent[-1][0] == hook
+    # only the chosen types are mirrored: "assigned" is, "ticket_created" is not
+    sent.clear()
+    t = raise_ticket(client, world["ravi"]["headers"], world["pay"]["id"], title="Panel config", assignee_id=kiran["id"])
+    slack.flush()
+    assert len(sent) == 0  # ticket creation is a "ticket_created" event, not selected
+    assign(client, world["ravi"]["headers"], t["id"], world["asha"]["id"])
+    slack.flush()
+    assert any("assigned you" in body["text"] for _, body in sent)
+
+    # switch off without losing the secret
+    st = client.put(f"{API}/integrations/slack/config", headers=admin, json={"enabled": False}).json()
+    assert st["enabled"] is False and st["configured"] is True
+    assert client.post(f"{API}/integrations/slack/test", headers=admin).status_code == 400
+    # a secret left out is kept; "" removes it
+    st = client.put(f"{API}/integrations/slack/config", headers=admin, json={"enabled": True, "channel": "#dev-tickets"}).json()
+    assert st["webhook_url_masked"] and st["channel"] == "#dev-tickets"
+    st = client.put(f"{API}/integrations/slack/config", headers=admin, json={"webhook_url": ""}).json()
+    assert st["webhook_url_masked"] is None and st["sources"]["slack_webhook_url"] == "env"
+    # reset everything back to .env
+    st = client.delete(f"{API}/integrations/slack/config", headers=admin).json()
+    assert all(v == "env" for v in st["sources"].values()) and st["timezone"] == runtime_config.ENV_DEFAULTS["TIMEZONE"]
+
+
+# --------------------------------------------------------------------------- #
+# Team chat
+# --------------------------------------------------------------------------- #
+def test_chat_channels_messages_and_realtime(client, admin, world):
+    ravi, asha, kiran, zed, pay = world["ravi"], world["asha"], world["kiran"], world["zed"], world["pay"]
+    C = f"{API}/chat"
+
+    # every project gets a channel its members see without joining; outsiders don't
+    side = client.get(f"{C}/channels", headers=asha["headers"]).json()
+    pay_ch = next(c for c in side if c["kind"] == "project" and c["project_id"] == pay["id"])
+    assert pay_ch["display_name"] == "Payments" and pay_ch["can_post"] and pay_ch["unread"] == 0
+    assert not any(c["project_id"] == pay["id"] for c in client.get(f"{C}/channels", headers=zed["headers"]).json())
+    assert client.get(f"{C}/channels/{pay_ch['id']}/messages", headers=zed["headers"]).status_code == 404
+
+    with client.websocket_connect(f"{C}/ws?token={kiran['headers']['Authorization'][7:]}") as ws:
+        assert ws.receive_json()["type"] == "hello"
+        # a message with a mention and a file reaches Kiran live, unread + mention counted
+        r = client.post(f"{C}/channels/{pay_ch['id']}/messages", headers=asha["headers"],
+                        data={"body": "Deploy at 5? @kiran@example.com"}, files={"files": ("plan.txt", b"steps", "text/plain")})
+        assert r.status_code == 201, r.text
+        msg = r.json()
+        assert msg["files"][0]["filename"] == "plan.txt"
+        ev = ws.receive_json()
+        while ev["type"] != "message.new":
+            ev = ws.receive_json()
+        assert ev["message"]["id"] == msg["id"] and ev["channel_id"] == pay_ch["id"]
+
+        k = next(c for c in client.get(f"{C}/channels", headers=kiran["headers"]).json() if c["id"] == pay_ch["id"])
+        assert k["unread"] == 1 and k["mentions"] == 1
+        inbox = client.get(f"{API}/notifications", headers=kiran["headers"]).json()["items"]
+        assert inbox[0]["type"] == "chat_mention" and "mentioned you in #pay" in inbox[0]["message"]
+
+        # typing is relayed
+        ws.send_json({"type": "typing", "channel_id": pay_ch["id"]})
+        ev = ws.receive_json()
+        while ev["type"] != "typing":
+            ev = ws.receive_json()
+        assert ev["user_id"] == kiran["id"]
+
+    # thread reply, reactions, pin, edit
+    reply = client.post(f"{C}/channels/{pay_ch['id']}/messages", headers=kiran["headers"], data={"body": "Yes", "parent_id": msg["id"]}).json()
+    thread = client.get(f"{C}/messages/{msg['id']}/thread", headers=asha["headers"]).json()
+    assert thread["parent"]["reply_count"] == 1 and [m["id"] for m in thread["replies"]] == [reply["id"]]
+    top = client.get(f"{C}/channels/{pay_ch['id']}/messages", headers=asha["headers"]).json()["messages"]
+    assert [m["id"] for m in top] == [msg["id"]]  # replies stay in the thread
+    r = client.post(f"{C}/messages/{msg['id']}/reactions", headers=kiran["headers"], json={"emoji": "👍"}).json()
+    assert r["reactions"] == [{"emoji": "👍", "count": 1, "user_ids": [kiran["id"]]}]
+    assert client.post(f"{C}/messages/{msg['id']}/reactions", headers=kiran["headers"], json={"emoji": "👍"}).json()["reactions"] == []
+    assert client.post(f"{C}/messages/{msg['id']}/pin", headers=kiran["headers"]).json()["pinned"] is True
+    assert len(client.get(f"{C}/channels/{pay_ch['id']}/pins", headers=asha["headers"]).json()) == 1
+    assert client.patch(f"{C}/messages/{msg['id']}", headers=kiran["headers"], json={"body": "hack"}).status_code == 403
+    edited = client.patch(f"{C}/messages/{msg['id']}", headers=asha["headers"], json={"body": "Deploy at 6?"}).json()
+    assert edited["edited_at"] and edited["body"] == "Deploy at 6?"
+
+    # read marker and "mark unread"
+    client.post(f"{C}/channels/{pay_ch['id']}/read", headers=kiran["headers"], json={"message_id": msg["id"]})
+    assert next(c for c in client.get(f"{C}/channels", headers=kiran["headers"]).json() if c["id"] == pay_ch["id"])["unread"] == 0
+    client.post(f"{C}/channels/{pay_ch['id']}/read", headers=kiran["headers"], json={"message_id": msg["id"], "unread": True})
+    assert client.get(f"{C}/unread", headers=kiran["headers"]).json()["unread"] >= 1
+
+    # files are private to the conversation
+    fid = msg["files"][0]["id"]
+    assert client.get(f"{C}/files/{fid}", headers=kiran["headers"]).content == b"steps"
+    assert client.get(f"{C}/files/{fid}", headers=zed["headers"]).status_code == 404
+
+    # deleting a message with replies leaves a placeholder; deleting the last reply removes it
+    assert client.delete(f"{C}/messages/{msg['id']}", headers=kiran["headers"]).status_code == 403
+    assert client.delete(f"{C}/messages/{msg['id']}", headers=asha["headers"]).status_code == 204
+    top = client.get(f"{C}/channels/{pay_ch['id']}/messages", headers=asha["headers"]).json()["messages"]
+    assert top[0]["deleted"] and top[0]["body"] == "" and top[0]["files"] == []
+    client.delete(f"{C}/messages/{reply['id']}", headers=kiran["headers"])
+    assert client.get(f"{C}/channels/{pay_ch['id']}/messages", headers=asha["headers"]).json()["messages"] == []
+
+    # public / private channels
+    pub = client.post(f"{C}/channels", headers=ravi["headers"], json={"name": "Random Talk", "topic": "Anything"}).json()
+    assert pub["name"] == "random-talk"
+    assert client.post(f"{C}/channels", headers=asha["headers"], json={"name": "random-talk"}).status_code == 409
+    assert any(c["id"] == pub["id"] and not c["joined"] for c in client.get(f"{C}/channels/browse", headers=zed["headers"]).json())
+    assert client.post(f"{C}/channels/{pub['id']}/messages", headers=zed["headers"], data={"body": "hi"}).status_code == 403
+    client.post(f"{C}/channels/{pub['id']}/join", headers=zed["headers"])
+    assert client.post(f"{C}/channels/{pub['id']}/messages", headers=zed["headers"], data={"body": "hi"}).status_code == 201
+    priv = client.post(f"{C}/channels", headers=ravi["headers"], json={"name": "leads", "is_private": True, "member_ids": [kiran["id"]]}).json()
+    assert client.get(f"{C}/channels/{priv['id']}", headers=asha["headers"]).status_code == 404
+    assert client.post(f"{C}/channels/{priv['id']}/join", headers=asha["headers"]).status_code == 404
+    assert {m["id"] for m in client.get(f"{C}/channels/{priv['id']}/members", headers=kiran["headers"]).json()} == {ravi["id"], kiran["id"]}
+    assert client.patch(f"{C}/channels/{priv['id']}", headers=kiran["headers"], json={"name": "x"}).status_code == 403
+    assert client.patch(f"{C}/channels/{priv['id']}", headers=ravi["headers"], json={"archived": True}).json()["archived"]
+    assert client.post(f"{C}/channels/{priv['id']}/messages", headers=kiran["headers"], data={"body": "late"}).status_code == 403
+
+    # direct messages are reused, private, and notify people who are away
+    dm = client.post(f"{C}/dm", headers=asha["headers"], json={"user_ids": [zed["id"]]}).json()
+    assert dm["kind"] == "dm" and dm["display_name"] == "Zed Outsider"
+    assert client.post(f"{C}/dm", headers=zed["headers"], json={"user_ids": [asha["id"]]}).json()["id"] == dm["id"]
+    client.post(f"{C}/channels/{dm['id']}/messages", headers=asha["headers"], data={"body": "psst"})
+    assert client.get(f"{C}/channels/{dm['id']}/messages", headers=kiran["headers"]).status_code == 404
+    z = next(c for c in client.get(f"{C}/channels", headers=zed["headers"]).json() if c["id"] == dm["id"])
+    assert z["unread"] == 1 and z["mentions"] == 1 and z["last_message"]["body"] == "psst"
+    assert "sent you a message" in client.get(f"{API}/notifications", headers=zed["headers"]).json()["items"][0]["message"]
+
+    # search only covers conversations you can read
+    assert [m["body"] for m in client.get(f"{C}/search", headers=zed["headers"], params={"q": "psst"}).json()] == ["psst"]
+    assert client.get(f"{C}/search", headers=kiran["headers"], params={"q": "psst"}).json() == []
+
+    # bad socket token is refused
+    import pytest
+    from starlette.websockets import WebSocketDisconnect
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(f"{C}/ws?token=nope") as bad:
+            bad.receive_json()

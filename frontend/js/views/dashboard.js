@@ -1,6 +1,7 @@
 import { api, auth } from "../api.js";
 import { STATUSES, avatar, clear, countUp, h, label, priorityBadge, spinner } from "../ui.js";
 import { lineChart, sparkline, stackedBars } from "../charts.js";
+import { daysLeftPill, sprintRange } from "./sprints.js";
 import { ticketTable } from "./ticketlist.js";
 
 const OPEN = ["todo", "in_progress", "blocked", "in_review"];
@@ -110,10 +111,22 @@ export async function renderDashboard(main) {
   async function load() {
     clear(body, spinner());
     const params = { days: state.days, project_id: state.project || undefined };
-    const [d, mine] = await Promise.all([
+    const [d, mine, activeSprints] = await Promise.all([
       api.get("/dashboard", params),
       api.get("/tickets/my", { status: OPEN, sort: "due_date", order: "asc", limit: 8, project_id: state.project || undefined }),
+      api.get("/sprints/active").catch(() => []),
     ]);
+    const sprintsShown = activeSprints.filter((s) => !state.project || String(s.project.id) === state.project);
+    const sprintCard = sprintsShown.length > 0 && h("section.card.flush.dash-sprints",
+      h("div.card-head", h("h2", "Active sprints")),
+      h("ul.due-list", sprintsShown.map((s) => {
+        const pct = s.ticket_count ? Math.round((s.done_count / s.ticket_count) * 100) : 0;
+        return h("li.sprint-line",
+          h("a.due-main", { href: `#/projects/${s.project.id}/sprints` }, h("span.key-pill", s.project.key), h("strong", s.name),
+            h("span.muted.small", sprintRange(s))),
+          h("div.due-meta", h("div.sp-bar.small", { title: `${s.done_count}/${s.ticket_count} done` }, h("i.done", { style: { width: `${pct}%` } })),
+            h("span.small", `${pct}%`), daysLeftPill(s)));
+      })));
     const k = d.kpis;
     const labels = d.trend.map((p) => p.date);
     const createdSeries = d.trend.map((p) => p.created);
@@ -203,6 +216,7 @@ export async function renderDashboard(main) {
 
     clear(body,
       tiles,
+      sprintCard,
       h("div.dash-grid", trendCard, mixCard),
       workloadCard ? h("div.dash-grid", workloadCard, h("div.dash-stack", dueCard, releaseCard)) : h("div.dash-grid.even", dueCard, releaseCard || feedCard),
       h("div.dash-grid", mineCard, workloadCard ? feedCard : (releaseCard ? feedCard : null)));

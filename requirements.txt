@@ -13,3 +13,5 @@ tzdata>=2024.1
 
 # Database migrations (run "alembic upgrade head" before starting the API)
 alembic>=1.13
+# Encrypts secrets saved from the admin panel (Slack webhook / bot token)
+cryptography>=42

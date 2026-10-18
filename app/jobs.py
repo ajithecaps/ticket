@@ -278,6 +278,9 @@ class Scheduler:
         return at <= now_local < at + SUMMARY_GRACE and state.get("summary_sent_on") != today
 
     def tick(self) -> None:
+        from . import runtime_config
+
+        runtime_config.refresh_if_stale()
         now = utcnow()
         if now >= self._next_overdue:
             self._next_overdue = now + timedelta(minutes=max(1, settings.OVERDUE_CHECK_MINUTES))

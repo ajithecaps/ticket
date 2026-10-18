@@ -6,6 +6,7 @@
 import { api, auth } from "../api.js";
 import { icon } from "../icons.js";
 import { currentQuery, setQuery } from "../app.js";
+import { sprintChip } from "./sprints.js";
 import {
   PRIORITIES, STATUSES, TYPES, avatar, busy, clear, confirmDialog, emptyState, errorBox, fmtDate, fmtDateTime, h,
   label, modal, priorityBadge, select, spinner, statusBadge, timeAgo, toast, typeBadge, userChip, userPicker,
@@ -66,6 +67,7 @@ const COLUMNS = [
     },
     csv: (t) => `${t.spent_hours || 0}/${t.estimated_hours ?? ""}`,
   },
+  { id: "sprint", name: "Sprint", cell: (t) => (t.sprint ? sprintChip(t.sprint) : h("span.muted", "Backlog")), csv: (t) => t.sprint?.name || "" },
   { id: "release", name: "Release", cell: (t) => (t.release ? h("a.badge.rel-chip", { href: `#/releases/${t.release.id}` }, [icon("rocket", { size: 12 }), ` ${t.release.name}`]) : h("span.muted", "—")), csv: (t) => t.release?.name || "" },
   { id: "created", name: "Created", sort: "created_at", cell: (t) => h("span.muted", { title: fmtDateTime(t.created_at) }, timeAgo(t.created_at)), csv: (t) => t.created_at },
   { id: "updated", name: "Updated", sort: "updated_at", cell: (t) => h("span.muted", { title: fmtDateTime(t.updated_at) }, timeAgo(t.updated_at)), csv: (t) => t.updated_at },
@@ -115,6 +117,7 @@ export function filteredTicketList(opts) {
     priority: q0.get("priority") || "",
     type: q0.get("type") || "",
     assignee: q0.get("assignee") || "",
+    sprint: q0.get("sprint") || "",
     overdue: q0.get("overdue") === "1",
     released: q0.get("released") === "1",
     sort: q0.get("sort") || "updated_at",
@@ -156,17 +159,21 @@ export function filteredTicketList(opts) {
     ...(opts.assignees?.length ? [["-", "──────────", { disabled: true }]] : []), ...(opts.assignees || [])],
   state.assignee, { onchange: onChange("assignee"), "aria-label": "Assignee" });
   const overdueBox = h("input", { type: "checkbox", checked: state.overdue, onchange: onChange("overdue") });
+  const sprintSel = opts.sprints && select("sprint", [["", "Any sprint"], ["active", "Active sprint"], ["backlog", "Backlog"],
+    ...opts.sprints.map((s) => [String(s.id), `${s.name}${s.status === "completed" ? " (done)" : ""}`])], state.sprint,
+  { onchange: onChange("sprint"), "aria-label": "Sprint" });
   const releasedBox = h("input", { type: "checkbox", checked: state.released, onchange: onChange("released") });
   const clearBtn = h("button.btn.sm.ghost", { onclick: () => applyFilters({}) }, "Clear filters");
 
   function applyFilters(f) {
-    Object.assign(state, { q: "", status: [], priority: "", type: "", assignee: "", overdue: false, released: false, offset: 0 }, f);
+    Object.assign(state, { q: "", status: [], priority: "", type: "", assignee: "", sprint: "", overdue: false, released: false, offset: 0 }, f);
+    if (sprintSel) sprintSel.value = state.sprint;
     search.value = state.q; prioritySel.value = state.priority; typeSel.value = state.type; assigneeSel.value = state.assignee;
     overdueBox.checked = state.overdue; releasedBox.checked = state.released;
     statusChips.querySelectorAll(".chip").forEach((c) => c.setAttribute("aria-pressed", String(state.status.includes(c.dataset.status))));
     load();
   }
-  const filtering = () => Boolean(state.q || state.status.length || state.priority || state.type || state.assignee || state.overdue || state.released);
+  const filtering = () => Boolean(state.q || state.status.length || state.priority || state.type || state.assignee || state.sprint || state.overdue || state.released);
 
   // ------------------------------------------------------------- view controls
   const groupSel = select("group", GROUPS, prefs.group, { "aria-label": "Group by", onchange: (e) => { prefs.group = e.target.value; persist(); draw(); } });
@@ -249,12 +256,15 @@ export function filteredTicketList(opts) {
     if (state.assignee === "me") p.assignee_id = auth.user.id;
     else if (state.assignee === "none") p.unassigned = true;
     else if (state.assignee) p.assignee_id = state.assignee;
+    if (state.sprint === "active") p.active_sprint = true;
+    else if (state.sprint === "backlog") p.backlog = true;
+    else if (state.sprint) p.sprint_id = state.sprint;
     return { ...p, ...locked };
   }
 
   async function load() {
     setQuery({
-      q: state.q, status: state.status, priority: state.priority, type: state.type, assignee: state.assignee,
+      q: state.q, status: state.status, priority: state.priority, type: state.type, assignee: state.assignee, sprint: state.sprint,
       overdue: state.overdue ? "1" : "", released: state.released ? "1" : "",
       sort: state.sort !== "updated_at" ? state.sort : "", order: state.order !== "desc" ? state.order : "", offset: state.offset || "",
     });
@@ -447,6 +457,7 @@ export function filteredTicketList(opts) {
     h("div.card.filters-card",
       h("div.filters", search, prioritySel, typeSel,
         !("unassigned" in locked) && assigneeSel,
+        sprintSel,
         !("overdue" in locked) && h("label.check", overdueBox, "Overdue"),
         !("in_release" in locked) && h("label.check", { title: "Include tickets that were moved into a release" }, releasedBox, "Show released"),
         clearBtn),

@@ -2,6 +2,7 @@ import { api, auth } from "../api.js";
 import { icon } from "../icons.js";
 import { navigate } from "../app.js";
 import { confirmIfOverlapping, fetchOverlaps, overlapCount } from "../overlaps.js";
+import { sprintChip } from "./sprints.js";
 import {
   PRIORITIES, STATUSES, TYPES, avatar, busy, clear, confirmDialog, copyText, field, markdownEditor, renderMarkdown, fmtBytes, fmtDate, fmtDateTime,
   fmtHours, formData, fromDateInput, fromStartInput, h, label, modal, priorityBadge, select, statusBadge, timeAgo,
@@ -18,6 +19,8 @@ export function newTicketDialog(projects, preselect, ctx) {
   const assigneeSlot = h("div");
   const startSlot = h("div");
   const overlapSlot = h("div");
+  const sprintSlot = h("div");
+  let sprintSel = null;
   const startInput = h("input", { type: "date", name: "start_date", onchange: () => checkOverlap() });
   const dueInput = h("input", { type: "date", name: "due_date", onchange: () => checkOverlap() });
   let overlapReq = 0;
@@ -38,6 +41,16 @@ export function newTicketDialog(projects, preselect, ctx) {
       userPicker((q) => api.get("/users/lookup", { q, project_id: p.id, limit: 10 }), (u) => { assignee = u; checkOverlap(); }, { allowNone: true, placeholder: "Unassigned" })));
     startInput.value = isOwner ? startInput.value : "";
     clear(startSlot, isOwner && field("Start date", startInput));
+    sprintSel = null;
+    clear(sprintSlot);
+    if (isOwner && p) {
+      api.get(`/projects/${p.id}/sprints`).then((list) => {
+        const open = list.filter((s) => s.status !== "completed");
+        if (!open.length || projectSel.value !== String(p.id)) return;
+        sprintSel = select("sprint", [["", "Backlog (no sprint)"], ...open.map((s) => [String(s.id), `${s.name}${s.status === "active" ? " · active" : ""}`])], "");
+        clear(sprintSlot, field("Sprint", sprintSel));
+      }).catch(() => {});
+    }
     checkOverlap();
   }
 
@@ -53,7 +66,7 @@ export function newTicketDialog(projects, preselect, ctx) {
       startSlot,
       field("Due date", dueInput),
       field("Estimate (hours)", h("input", { type: "number", name: "estimated_hours", min: 0, max: 10000, step: 0.5 }))),
-    assigneeSlot,
+    h("div.grid-2.tight", assigneeSlot, sprintSlot),
     overlapSlot,
     h("div.form-actions", h("button.btn.primary", { type: "submit" }, "Create ticket")));
   drawAssignee();
@@ -68,6 +81,7 @@ export function newTicketDialog(projects, preselect, ctx) {
       estimated_hours: d.estimated_hours === "" ? null : Number(d.estimated_hours),
     };
     if (startInput.value && startSlot.childElementCount) body.start_date = fromStartInput(startInput.value);
+    if (sprintSel && sprintSel.value) body.sprint_id = Number(sprintSel.value);
     if (assignee) body.assignee_id = assignee.id;
     busy(form.querySelector("[type=submit]"), async () => {
       const t = await api.post(`/projects/${projectSel.value}/tickets`, body);
@@ -82,6 +96,7 @@ export function newTicketDialog(projects, preselect, ctx) {
 export async function renderTicket(main, key) {
   let t = await api.get(`/tickets/by-key/${encodeURIComponent(key)}`);
   const isOwner = t.can_assign; // can_assign == project owner / admin
+  const projectSprints = isOwner ? await api.get(`/projects/${t.project.id}/sprints`).catch(() => []) : [];
 
   const header = h("div");
   const sidebar = h("aside.ticket-side");
@@ -268,6 +283,13 @@ export async function renderTicket(main, key) {
     clear(sidebar, h("div.card.props",
       row("Assignee", [assigneeCell, meAssign, clashSlot]),
       row("Reporter", userChip(t.reporter)),
+      (canOwner && projectSprints.some((s) => s.status !== "completed")) || t.sprint ? row("Sprint", canOwner && !(t.sprint && t.sprint.status === "completed")
+        ? h("div.inline-edit",
+          select("sprint", [["", "Backlog (no sprint)"], ...projectSprints.filter((s) => s.status !== "completed")
+            .map((s) => [String(s.id), `${s.name}${s.status === "active" ? " · active" : ""}`])], t.sprint ? String(t.sprint.id) : "",
+          { "aria-label": "Sprint", onchange: (e) => patch({ sprint_id: e.target.value ? Number(e.target.value) : null }) }),
+          t.sprint && sprintChip(t.sprint, { href: `#/projects/${t.project.id}/sprints` }))
+        : sprintChip(t.sprint, { href: `#/projects/${t.project.id}/sprints` })) : null,
       t.release && row("Release", h("a.badge.rel-chip", { href: `#/releases/${t.release.id}` },
         t.release.status === "released" ? [icon("rocket", { size: 12 }), ` ${t.release.name} · released ${fmtDate(t.release.released_at)}`] : `${t.release.name} · planned`)),
       row("Type", t.can_edit ? select("type", TYPES, t.type, { "aria-label": "Type", onchange: (e) => patch({ type: e.target.value }) }) : label(t.type)),
@@ -590,6 +612,7 @@ const ACTIONS = {
   overdue_alert: () => "flagged the ticket as overdue",
   converted: (a) => `created this ticket from the upcoming task "${a.new_value}"`,
   release_added: (a) => `moved it into release ${a.new_value}`,
+  sprint_moved: (a) => (a.new_value ? `planned it into ${a.new_value}` : `moved it back to the backlog${a.old_value ? ` from ${a.old_value}` : ""}`),
   release_removed: (a) => `took it out of release ${a.old_value}`,
   released: (a) => `released it to production in ${a.new_value}`,
 };
@@ -611,7 +634,7 @@ async function activity(el, t) {
   ]);
   const people = new Map(members.map((u) => [u.id, u.name]));
   [t.reporter, t.assignee].forEach((u) => u && people.set(u.id, u.name));
-  const shown = (a) => !["time_logged", "overdue_alert", "converted", "release_added", "release_removed", "released"].includes(a.action)
+  const shown = (a) => !["time_logged", "overdue_alert", "converted", "release_added", "release_removed", "released", "sprint_moved"].includes(a.action)
     && (a.old_value || a.new_value);
   clear(el, items.length
     ? h("ol.timeline", items.map((a) => h("li",

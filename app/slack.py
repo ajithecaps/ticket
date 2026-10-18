@@ -42,6 +42,7 @@ EMOJI = {
     NotificationType.OVERDUE: ":alarm_clock:",
     NotificationType.UPCOMING: ":clipboard:",
     NotificationType.RELEASE: ":rocket:",
+    NotificationType.SPRINT: ":runner:",
 }
 
 
@@ -64,7 +65,7 @@ def _request(url: str, *, data: bytes | None, headers: dict[str, str]) -> tuple[
 def api(method: str, params: dict) -> dict:
     """Call a Slack Web API method with the bot token."""
     headers = {"Authorization": f"Bearer {settings.SLACK_BOT_TOKEN}"}
-    if method.startswith("users."):
+    if method.startswith(("users.", "conversations.")):  # read methods take query parameters
         url = f"https://slack.com/api/{method}?{urllib.parse.urlencode(params)}"
         _, body, _ = _request(url, data=None, headers=headers)
     else:
@@ -258,3 +259,16 @@ def _send_after_commit(session: Session) -> None:
 @event.listens_for(Session, "after_soft_rollback")
 def _drop_on_rollback(session: Session, _previous_transaction) -> None:
     session.info.pop("slack_events", None)
+
+
+def _forget_people() -> None:
+    _slack_ids.clear()
+
+
+def _register() -> None:
+    from . import runtime_config
+
+    runtime_config.on_change(_forget_people)  # a new bot token means new user lookups
+
+
+_register()

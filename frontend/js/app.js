@@ -19,6 +19,7 @@ import { renderTimeline } from "./views/timeline.js";
 import { renderDocEditor, renderDocHistory, renderDocPage, renderDocsHome } from "./views/docs.js";
 import { ATTENTION, attentionCounts, renderAttention } from "./views/attention.js";
 import { renderLoginPage } from "./views/login.js";
+import { renderChat, startChat, stopChat } from "./views/chat.js";
 
 const root = document.getElementById("app");
 const isAdmin = () => auth.user?.role === "admin";
@@ -29,8 +30,9 @@ const routes = [
   [/^\/tickets$/, renderTickets],
   [/^\/tickets\/([A-Za-z][A-Za-z0-9]{1,9}-\d+)$/, (el, [key]) => renderTicket(el, key)],
   [/^\/projects$/, renderProjects],
-  [/^\/projects\/(\d+)(?:\/(board|list|timeline|docs|upcoming|releases|members|settings))?$/, (el, [id, tab]) => renderProject(el, Number(id), tab || "board")],
+  [/^\/projects\/(\d+)(?:\/(board|list|sprints|timeline|docs|upcoming|releases|members|settings))?$/, (el, [id, tab]) => renderProject(el, Number(id), tab || "board")],
   [/^\/notifications$/, renderNotifications],
+  [/^\/chat(?:\/(\d+))?$/, (el, [id]) => renderChat(el, [id])],
   [/^\/users$/, renderUsers, true],
   [/^\/reports$/, renderReports, true],
   [/^\/reports\/(\d+)$/, (el, [id]) => renderDeveloperReport(el, Number(id)), true],
@@ -130,6 +132,7 @@ function navSections() {
       { href: "/tickets", label: "Tickets", icon: "tickets", keys: "G T" },
       { href: "/projects", label: "Projects", icon: "folder", keys: "G P" },
       { href: "/timeline", label: "Timeline", icon: "timeline", keys: "G L" },
+      { href: "/chat", label: "Chat", icon: "message", keys: "G M", chat: true },
       { href: "/notifications", label: "Inbox", icon: "inbox", keys: "G N", badge: true },
     ]],
     ["Needs attention", Object.entries(ATTENTION).map(([key, c]) => ({
@@ -166,6 +169,7 @@ function renderShell() {
     nav: sections.flatMap(([, items]) => items), newTicket: newTicketAnywhere, changePassword, logout, navigate,
   });
   bell = notificationBell();
+  startChat();
   if (isCollapsed()) document.body.classList.add("nav-collapsed");
 
   const u = auth.user;
@@ -201,7 +205,8 @@ function renderShell() {
     href: `#${it.href}`, title: it.label, dataset: { href: it.href, attention: it.attention || "" }, hidden: Boolean(it.ownerOnly),
   },
   icon(it.icon, { size: 18 }), h("span.nav-text", it.label),
-  it.badge ? h("span.nav-badge", { hidden: true }) : null,
+  it.badge ? h("span.nav-badge.inbox-count", { hidden: true }) : null,
+  it.chat ? h("span.nav-badge.chat-count", { hidden: true }) : null,
   it.attention ? h(`span.nav-count.att-${it.attention}`, { hidden: true }) : null);
 
   clear(root,
@@ -245,7 +250,7 @@ function renderShell() {
   })();
 
   // Mirror the unread count onto the sidebar "Inbox" item.
-  const badge = root.querySelector(".nav-badge");
+  const badge = root.querySelector(".inbox-count");
   const count = bell.el.querySelector(".count");
   if (badge && count) {
     const sync = () => { badge.hidden = count.hidden; badge.textContent = count.textContent; };
@@ -312,6 +317,7 @@ function logout() {
   auth.token = null;
   auth.user = null;
   bell?.stop();
+  stopChat();
   location.hash = "";
   renderLogin();
 }
@@ -319,6 +325,7 @@ function logout() {
 // ----------------------------------------------------------------------------- login
 function renderLogin(message) {
   bell?.stop();
+  stopChat();
   renderLoginPage(root, {
     message,
     onSuccess: () => {

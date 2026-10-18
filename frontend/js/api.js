@@ -80,6 +80,7 @@ export const api = {
   get: (path, params) => request("GET", path, { params }),
   post: (path, json) => request("POST", path, { json }),
   patch: (path, json) => request("PATCH", path, { json }),
+  put: (path, json) => request("PUT", path, { json }),
   del: (path) => request("DELETE", path),
   upload: (path, form) => request("POST", path, { form }),
 

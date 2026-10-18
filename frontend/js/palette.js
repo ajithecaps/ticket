@@ -117,7 +117,8 @@ const SHORTCUTS = [
   ["Search / command palette", `${MOD} K`, "/"],
   ["Create a ticket", "C"],
   ["Go to dashboard", "G D"], ["Go to tickets", "G T"], ["Go to projects", "G P"], ["Go to timeline", "G L"],
-  ["Go to docs", "G O"], ["Go to releases", "G R"], ["Go to upcoming", "G U"], ["Go to notifications", "G N"],
+  ["Go to docs", "G O"], ["Go to releases", "G R"], ["Go to upcoming", "G U"], ["Go to notifications", "G N"], ["Go to chat", "G M"],
+  ["Chat: previous / next conversation", "Alt ↑", "Alt ↓"], ["Chat: edit your last message", "↑"],
   ["Show this help", "?"],
   ["Bold / italic / link in editors", `${MOD} B`, `${MOD} I`, `${MOD} K`],
   ["Save a doc page", `${MOD} S`],
@@ -128,7 +129,7 @@ export function showShortcuts() {
     h("span", what), h("span.shortcut-keys", keys.map((k, i) => [i ? h("span.muted.small", " or ") : null, ...k.split(" ").map((x) => h("kbd", x))]))))));
 }
 
-const GOTO = { d: "/", t: "/tickets", p: "/projects", l: "/timeline", o: "/docs", r: "/releases", u: "/upcoming", n: "/notifications" };
+const GOTO = { d: "/", t: "/tickets", p: "/projects", l: "/timeline", o: "/docs", r: "/releases", u: "/upcoming", n: "/notifications", m: "/chat" };
 let pendingG = 0;
 
 function typing(e) {

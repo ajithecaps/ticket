@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     OVERDUE_CHECK_MINUTES: int = 15
 
     # Slack: set SLACK_WEBHOOK_URL (simplest), or SLACK_BOT_TOKEN + SLACK_CHANNEL (enables @mentions).
+    # Everything in this block (plus APP_BASE_URL and TIMEZONE) can also be changed from the admin
+    # panel (Slack page); values saved there override these and need no restart.
+    SLACK_ENABLED: bool = True
     SLACK_WEBHOOK_URL: str = ""
     SLACK_BOT_TOKEN: str = ""
     SLACK_CHANNEL: str = ""
@@ -56,8 +59,12 @@ class Settings(BaseSettings):
         return {e.strip().lower() for e in self.BLOCKED_EXTENSIONS.split(",") if e.strip()}
 
     @property
-    def slack_enabled(self) -> bool:
+    def slack_configured(self) -> bool:
         return bool(self.SLACK_WEBHOOK_URL or (self.SLACK_BOT_TOKEN and self.SLACK_CHANNEL))
+
+    @property
+    def slack_enabled(self) -> bool:
+        return self.SLACK_ENABLED and self.slack_configured
 
     @property
     def slack_notify_types(self) -> set[str] | None:

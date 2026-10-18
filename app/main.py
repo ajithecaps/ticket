@@ -13,9 +13,12 @@ from . import models  # noqa: F401  (registers tables on Base.metadata)
 from .config import settings
 from .database import Base, SessionLocal, engine
 from .models import Role, User
+from . import runtime_config
+from .chat_hub import hub
 from .jobs import scheduler
+from starlette.concurrency import run_in_threadpool
 from .routers import (
-    attachments, auth, comments, dashboard, docs, integrations, notifications, projects, releases, reports, tickets, timeline,
+    attachments, auth, chat, comments, dashboard, docs, sprints, integrations, notifications, projects, releases, reports, tickets, timeline,
     upcoming, users,
 )
 from .security import hash_password
@@ -76,9 +79,11 @@ async def lifespan(_app: FastAPI):
     )
 
     bootstrap_admin()
+    runtime_config.refresh_if_stale(0)  # settings saved from the admin panel
     scheduler.start()  # overdue alerts + daily Slack summary
     yield
     scheduler.stop()
+    await hub.stop()
 
 
 app = FastAPI(
@@ -92,6 +97,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+@app.middleware("http")
+async def _fresh_settings(request: Request, call_next):
+    # Pick up admin-panel settings saved by another worker (cheap: at most one query every 15 s).
+    await run_in_threadpool(runtime_config.refresh_if_stale)
+    return await call_next(request)
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
@@ -102,7 +114,7 @@ app.add_middleware(
 
 for module in (
     auth, users, projects, tickets, comments, attachments, notifications, reports, integrations, upcoming, releases,
-    timeline, docs, dashboard,
+    timeline, docs, dashboard, sprints, chat,
 ):
     app.include_router(module.router, prefix=settings.API_PREFIX)
 

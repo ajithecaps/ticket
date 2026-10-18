@@ -74,6 +74,14 @@ class NotificationType(str, enum.Enum):
     OVERDUE = "overdue"
     UPCOMING = "upcoming"
     RELEASE = "release"
+    SPRINT = "sprint"
+    CHAT_MENTION = "chat_mention"
+
+
+class SprintStatus(str, enum.Enum):
+    PLANNED = "planned"
+    ACTIVE = "active"  # at most one per project
+    COMPLETED = "completed"
 
 
 class ReleaseStatus(str, enum.Enum):
@@ -220,12 +228,17 @@ class Ticket(Base):
     release_id: Mapped[int | None] = mapped_column(
         ForeignKey("releases.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # The sprint the ticket is planned into; None = backlog.
+    sprint_id: Mapped[int | None] = mapped_column(
+        ForeignKey("sprints.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
 
     project: Mapped[Project] = relationship(back_populates="tickets", lazy="joined")
     release: Mapped["Release | None"] = relationship(back_populates="tickets", lazy="joined")
+    sprint: Mapped["Sprint | None"] = relationship(back_populates="tickets", lazy="joined")
     reporter: Mapped[User] = relationship(foreign_keys=[reporter_id], lazy="joined")
     assignee: Mapped[User | None] = relationship(foreign_keys=[assignee_id], lazy="joined")
 
@@ -469,3 +482,132 @@ class DocRevision(Base):
 
     page: Mapped[DocPage] = relationship(back_populates="revisions")
     author: Mapped[User | None] = relationship(lazy="joined", foreign_keys=[edited_by])
+
+
+class Sprint(Base):
+    """A time-boxed iteration of one project. Tickets are planned into it from the backlog."""
+
+    __tablename__ = "sprints"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    goal: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[SprintStatus] = enum_column(SprintStatus, default=SprintStatus.PLANNED, index=True)
+    start_date: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    end_date: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+    project: Mapped[Project] = relationship(lazy="joined")
+    tickets: Mapped[list[Ticket]] = relationship(back_populates="sprint", order_by="Ticket.number")
+
+
+class AppSetting(Base):
+    """A setting saved from the admin panel. Overrides the matching .env value; secrets are encrypted."""
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+    is_secret: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+
+# --------------------------------------------------------------------------- #
+# Team chat
+# --------------------------------------------------------------------------- #
+class ChatChannel(Base):
+    """A conversation. kind: "project" (everyone in the project), "channel" (public or private), "dm"."""
+
+    __tablename__ = "chat_channels"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), index=True)
+    name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    topic: Mapped[str] = mapped_column(String(300), default="")
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, unique=True)
+    is_private: Mapped[bool] = mapped_column(Boolean, default=False)
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    last_message_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+
+    project: Mapped[Project | None] = relationship(lazy="joined")
+
+
+class ChatMember(Base):
+    """Membership + read position. Project channels get rows lazily (access comes from the project)."""
+
+    __tablename__ = "chat_members"
+
+    channel_id: Mapped[int] = mapped_column(ForeignKey("chat_channels.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True)
+    last_read_id: Mapped[int] = mapped_column(default=0)
+    muted: Mapped[bool] = mapped_column(Boolean, default=False)
+    joined_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+    __table_args__ = (Index("ix_chat_messages_channel_parent", "channel_id", "parent_id", "id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    channel_id: Mapped[int] = mapped_column(ForeignKey("chat_channels.id", ondelete="CASCADE"))
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("chat_messages.id", ondelete="CASCADE"), nullable=True)
+    body: Mapped[str] = mapped_column(Text, default="")
+    reply_count: Mapped[int] = mapped_column(default=0)
+    last_reply_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False)
+    deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    edited_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+    user: Mapped[User | None] = relationship(lazy="joined")
+    reactions: Mapped[list["ChatReaction"]] = relationship(cascade="all, delete-orphan", lazy="selectin")
+    files: Mapped[list["ChatFile"]] = relationship(cascade="all, delete-orphan", lazy="selectin")
+
+
+class ChatReaction(Base):
+    __tablename__ = "chat_reactions"
+
+    message_id: Mapped[int] = mapped_column(ForeignKey("chat_messages.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    emoji: Mapped[str] = mapped_column(String(32), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class ChatFile(Base):
+    __tablename__ = "chat_files"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    message_id: Mapped[int] = mapped_column(ForeignKey("chat_messages.id", ondelete="CASCADE"), index=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    stored_name: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(120), default="application/octet-stream")
+    size: Mapped[int] = mapped_column(default=0)
+
+
+class ChatEvent(Base):
+    """Outbox of real-time events. Every worker tails it and pushes new rows to its WebSocket clients."""
+
+    __tablename__ = "chat_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    channel_id: Mapped[int | None] = mapped_column(nullable=True)
+    user_ids: Mapped[str] = mapped_column(Text, default="")  # explicit recipients ("1,5,9"); empty = channel audience
+    type: Mapped[str] = mapped_column(String(32))
+    payload: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, index=True)
+
+
+class ChatPresence(Base):
+    __tablename__ = "chat_presence"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    last_seen: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)

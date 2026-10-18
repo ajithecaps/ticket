@@ -11,6 +11,7 @@ from .models import (
     TicketStatus,
     TicketType,
     ReleaseStatus,
+    SprintStatus,
     UpcomingStatus,
 )
 
@@ -151,6 +152,7 @@ class TicketCreate(BaseModel):
     assignee_id: int | None = Field(None, description="Project owners / admin only")
     start_date: datetime | None = Field(None, description="Planned start (project owners / admin)")
     due_date: datetime | None = None
+    sprint_id: int | None = Field(None, description="Plan straight into a sprint (project owners / admin)")
     estimated_hours: float | None = Field(None, ge=0, le=10000)
 
     @field_validator("title")
@@ -170,6 +172,7 @@ class TicketUpdate(BaseModel):
     start_date: datetime | None = None
     due_date: datetime | None = None
     estimated_hours: float | None = Field(None, ge=0, le=10000)
+    sprint_id: int | None = None
 
 
 class AssignIn(BaseModel):
@@ -185,6 +188,14 @@ class ReleaseBrief(ORMModel):
     name: str
     status: ReleaseStatus
     released_at: datetime | None = None
+
+
+class SprintBrief(ORMModel):
+    id: int
+    name: str
+    status: SprintStatus
+    start_date: datetime | None = None
+    end_date: datetime | None = None
 
 
 class TicketOut(ORMModel):
@@ -209,6 +220,7 @@ class TicketOut(ORMModel):
     completed_at: datetime | None = None
     reopen_count: int
     release: ReleaseBrief | None = None
+    sprint: SprintBrief | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -679,3 +691,51 @@ class DashboardOut(BaseModel):
     due_soon: list[TicketOut]
     activity: list[ActivityFeedItem]
     releases: list[ReleaseLine]
+
+
+# --------------------------------------------------------------------------- #
+# Sprints
+# --------------------------------------------------------------------------- #
+class SprintCreate(BaseModel):
+    name: str | None = Field(None, max_length=100, description='Default "Sprint N"')
+    goal: str = Field("", max_length=5000)
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+
+
+class SprintUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=100)
+    goal: str | None = Field(None, max_length=5000)
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+
+
+class SprintOut(SprintBrief):
+    project: ProjectBrief
+    goal: str
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    created_at: datetime
+    ticket_count: int = 0
+    done_count: int = 0  # done or verified
+    open_count: int = 0
+    estimated_hours: float = 0
+    spent_hours: float = 0
+    days_total: int | None = None
+    days_left: int | None = None  # active sprints: calendar days until the end date (negative = overrun)
+    can_manage: bool = False
+
+
+class SprintCompleteIn(BaseModel):
+    move_open_to: int | None = Field(None, description="Sprint id for unfinished tickets; null = backlog")
+
+
+class SprintMoveIn(BaseModel):
+    ticket_ids: list[int] = Field(min_length=1, max_length=200)
+    sprint_id: int | None = Field(None, description="Target sprint; null = backlog")
+
+
+class BurndownPoint(BaseModel):
+    date: str
+    remaining: int | None = None  # None for days still in the future
+    ideal: float

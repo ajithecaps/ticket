@@ -203,7 +203,7 @@ app/
   routers/upcoming.py  upcoming tasks (requirements before tickets)
   routers/releases.py  releases: finished tickets shipped to production
   routers/timeline.py  timeline (gantt) and overlap check; schedule.py has the window logic
-migrations/        Alembic environment and versions (0001 baseline … 0005 docs)
+migrations/        Alembic environment and versions (0001 baseline … 0006 sprints)
   routers/         auth, users, projects, tickets, comments, attachments, notifications, reports
 frontend/          single-page web UI (plain HTML/CSS/JS modules, no build step), served at /
 tests/             14 end-to-end tests against the real API
@@ -346,6 +346,24 @@ date it runs from when work started / it was assigned / it was created. Tickets 
 
 API: `GET /timeline?start=&end=&project_id=&user_id=&include_done=` ·
 `GET /timeline/overlaps?user_id=&start=&end=&exclude_ticket_id=`
+
+## Sprints
+
+Each project can plan its work in **sprints** (project tab **Sprints**). Owners create a sprint (name,
+dates - 1/2/3-week presets - and a goal), plan tickets into it from the **backlog** by selecting rows
+or dragging them between sections, and **start** it - one active sprint per project. **Completing**
+it records the result and moves unfinished tickets to the backlog or to a planned sprint. Members
+are notified when a sprint starts or completes (in-app and Slack).
+
+Sprint time is visible everywhere: the active sprint card (dates, days left, progress, hours, time
+used, burndown), the board (defaults to the active sprint, with a banner; switch to all tickets,
+backlog or a planned sprint), the ticket sidebar (owners change the sprint there), a Sprint column and
+filter in ticket lists, and an **Active sprints** card on the dashboard. Days are counted in `TIMEZONE`.
+
+API: `GET|POST /projects/{id}/sprints` · `GET /sprints/active` · `GET|PATCH|DELETE /sprints/{id}` ·
+`POST /sprints/{id}/start` · `POST /sprints/{id}/complete` (`move_open_to`) · `GET /sprints/{id}/burndown` ·
+`POST /projects/{id}/sprint-moves` (`ticket_ids`, `sprint_id` or null for backlog); tickets accept
+`sprint_id` on create/update and lists filter by `sprint_id`, `backlog=true`, `active_sprint=true`.
 
 ## Releases
 

@@ -8,6 +8,8 @@ from sqlalchemy import and_, case, func, not_, or_, select
 
 from ..deps import CurrentUser, DbSession
 from ..models import (
+    Sprint,
+    SprintStatus,
     ProjectRole,
     CLOSED_STATUSES,
     ReleaseStatus,
@@ -84,6 +86,9 @@ class TicketFilters:
         due_before: datetime | None = None,
         due_after: datetime | None = None,
         release_id: Annotated[int | None, Query(description="Tickets in this release")] = None,
+        sprint_id: Annotated[int | None, Query(description="Tickets in this sprint")] = None,
+        backlog: Annotated[bool | None, Query(description="true: only tickets in no sprint")] = None,
+        active_sprint: Annotated[bool | None, Query(description="true: only tickets in their project's active sprint")] = None,
         in_release: Annotated[
             bool | None, Query(description="false: hide tickets moved into a release (the board does this)")
         ] = None,
@@ -105,6 +110,9 @@ class TicketFilters:
         self.due_before = ensure_utc(due_before)
         self.due_after = ensure_utc(due_after)
         self.release_id = release_id
+        self.sprint_id = sprint_id
+        self.backlog = backlog
+        self.active_sprint = active_sprint
         self.in_release = in_release
         self.sort = sort
         self.order = order
@@ -153,6 +161,12 @@ def _apply_filters(stmt, f: TicketFilters):
 
     if f.release_id is not None:
         stmt = stmt.where(Ticket.release_id == f.release_id)
+    if f.sprint_id is not None:
+        stmt = stmt.where(Ticket.sprint_id == f.sprint_id)
+    if f.backlog is True:
+        stmt = stmt.where(Ticket.sprint_id.is_(None))
+    if f.active_sprint is True:
+        stmt = stmt.where(Ticket.sprint_id.in_(select(Sprint.id).where(Sprint.status == SprintStatus.ACTIVE)))
     if f.in_release is True:
         stmt = stmt.where(Ticket.release_id.is_not(None))
     elif f.in_release is False:
@@ -231,6 +245,15 @@ def _detail(db, user, ticket: Ticket) -> TicketDetail:
 
 def _label(ticket: Ticket) -> str:
     return f"{ticket.key} {ticket.title}"
+
+
+def _check_sprint(db, project_id: int, sprint_id: int) -> Sprint:
+    sprint = db.get(Sprint, sprint_id)
+    if sprint is None or sprint.project_id != project_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "That sprint is not part of this project")
+    if sprint.status == SprintStatus.COMPLETED:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"{sprint.name} is already completed")
+    return sprint
 
 
 def _check_window(start, due) -> None:
@@ -399,6 +422,10 @@ def create_ticket(project_id: int, payload: TicketCreate, user: CurrentUser, db:
     if payload.start_date is not None and not owner:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only project owners can plan the start date")
     _check_window(payload.start_date, payload.due_date)
+    if payload.sprint_id is not None:
+        if not owner:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Only project owners can plan tickets into a sprint")
+        _check_sprint(db, project_id, payload.sprint_id)
     if payload.assignee_id is not None:
         if not owner:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Only project owners can assign tickets")
@@ -416,6 +443,7 @@ def create_ticket(project_id: int, payload: TicketCreate, user: CurrentUser, db:
         assigned_at=utcnow() if payload.assignee_id else None,
         start_date=ensure_utc(payload.start_date),
         due_date=ensure_utc(payload.due_date),
+        sprint_id=payload.sprint_id,
         estimated_hours=payload.estimated_hours,
     )
     db.add(ticket)
@@ -469,6 +497,7 @@ def update_ticket(ticket_id: int, payload: TicketUpdate, user: CurrentUser, db: 
         "priority": perms["owner"],
         "start_date": perms["owner"],
         "due_date": perms["owner"],
+        "sprint_id": perms["owner"],
         "estimated_hours": perms["owner"] or perms["assignee"],
     }
     denied = [f for f in data if not allowed[f]]
@@ -483,16 +512,24 @@ def update_ticket(ticket_id: int, payload: TicketUpdate, user: CurrentUser, db: 
         if key in data:
             data[key] = ensure_utc(data[key])
     _check_window(data.get("start_date", ticket.start_date), data.get("due_date", ticket.due_date))
+    if data.get("sprint_id") is not None:
+        _check_sprint(db, ticket.project_id, data["sprint_id"])
 
     changed: list[str] = []
     changes: list[tuple[str, object, object]] = []
+    sprint_name = lambda sid: (db.get(Sprint, sid).name if sid and db.get(Sprint, sid) else None)  # noqa: E731
     for field, value in data.items():
         old = getattr(ticket, field)
         if old != value:
-            log_activity(db, ticket, user, "updated", field, old, value)
+            if field == "sprint_id":  # history and messages use sprint names, not ids
+                old_name, new_name = sprint_name(old), sprint_name(value)
+                log_activity(db, ticket, user, "sprint_moved", "sprint", old_name, new_name)
+                changes.append(("sprint", old_name, new_name or "backlog"))
+            else:
+                log_activity(db, ticket, user, "updated", field, old, value)
+                changes.append((field, old, value))
             setattr(ticket, field, value)
             changed.append(field)
-            changes.append((field, old, value))
 
     if changed:
         # Assignee and reporter always; owners too when someone else (developer/reporter) made the edit.

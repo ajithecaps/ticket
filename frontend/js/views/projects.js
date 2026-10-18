@@ -11,6 +11,8 @@ import { renderProjectUpcoming } from "./upcoming.js";
 import { addToReleaseDialog, renderProjectReleases } from "./releases.js";
 import { renderTimeline } from "./timeline.js";
 import { renderDocsHome } from "./docs.js";
+import { daysLeftPill, renderProjectSprints, sprintRange } from "./sprints.js";
+import { currentQuery } from "../app.js";
 
 const isAdmin = () => auth.user.role === "admin";
 
@@ -85,7 +87,7 @@ export async function renderProject(main, id, tab) {
   const [project, members] = await Promise.all([api.get(`/projects/${id}`), api.get(`/projects/${id}/members`)]);
   const owner = project.my_role === "owner" || project.my_role === "admin";
 
-  const tabs = [["board", "Board"], ["list", "List"], ["timeline", "Timeline"], ["docs", "Docs"], ["upcoming", "Upcoming"], ["releases", "Releases"], ["members", `Members (${members.length})`]];
+  const tabs = [["board", "Board"], ["list", "List"], ["sprints", "Sprints"], ["timeline", "Timeline"], ["docs", "Docs"], ["upcoming", "Upcoming"], ["releases", "Releases"], ["members", `Members (${members.length})`]];
   if (owner) tabs.push(["settings", "Settings"]);
 
   const body = h("div.tab-body");
@@ -103,12 +105,15 @@ export async function renderProject(main, id, tab) {
 
   if (tab === "board") await renderBoard(body, project, owner);
   else if (tab === "list") {
+    const sprints = await api.get(`/projects/${id}/sprints`).catch(() => []);
     clear(body, filteredTicketList({
       endpoint: `/projects/${id}/tickets`,
       showProject: false,
       assignees: members.map((m) => [String(m.user.id), m.user.name]),
+      sprints,
     }));
-  } else if (tab === "timeline") await renderTimeline(body, { projectId: project.id });
+  } else if (tab === "sprints") await renderProjectSprints(body, project, { owner });
+  else if (tab === "timeline") await renderTimeline(body, { projectId: project.id });
   else if (tab === "docs") await renderDocsHome(body, { projectId: project.id });
   else if (tab === "upcoming") await renderProjectUpcoming(body, project);
   else if (tab === "releases") await renderProjectReleases(body, project);
@@ -119,7 +124,28 @@ export async function renderProject(main, id, tab) {
 async function renderBoard(body, project, owner) {
   const board = h("div.board");
   const toolbar = h("div.board-toolbar");
-  clear(body, toolbar, board);
+  const sprintBanner = h("div");
+  clear(body, toolbar, sprintBanner, board);
+
+  // Sprint scope: defaults to the active sprint when there is one.
+  const sprints = (await api.get(`/projects/${project.id}/sprints`)).filter((s) => s.status !== "completed");
+  const activeSprint = sprints.find((s) => s.status === "active");
+  const wanted = currentQuery().get("sprint");
+  let sprintScope = wanted || (activeSprint ? "active" : "all");
+  const scopeParams = () => (sprintScope === "all" ? {} : sprintScope === "backlog" ? { backlog: true }
+    : sprintScope === "active" ? (activeSprint ? { sprint_id: activeSprint.id } : {}) : { sprint_id: Number(sprintScope) });
+  const scopedSprint = () => (sprintScope === "active" ? activeSprint : sprints.find((s) => String(s.id) === sprintScope));
+  function drawBanner() {
+    const s = scopedSprint();
+    if (!s) { clear(sprintBanner); return; }
+    const pct = s.ticket_count ? Math.round((s.done_count / s.ticket_count) * 100) : 0;
+    clear(sprintBanner, h("div.sprint-banner",
+      h("div.row.wrap", h(`span.sprint-status.${s.status}`, h("i"), s.status === "active" ? "Active sprint" : "Planned"),
+        h("strong", s.name), h("span.muted.small", sprintRange(s)), daysLeftPill(s)),
+      s.goal && h("span.muted.small.ellipsis.sprint-banner-goal", s.goal),
+      h("div.row.sprint-banner-progress", h("div.sp-bar.small", h("i.done", { style: { width: `${pct}%` } })), h("span.small", `${s.done_count}/${s.ticket_count} done`),
+        h("a.small", { href: `#/projects/${project.id}/sprints` }, "Sprint plan"))));
+  }
 
   const PRIORITY_RANK = { critical: 4, high: 3, medium: 2, low: 1 };
   const filter = { q: "", person: "", mine: false, priority: "" };
@@ -134,7 +160,9 @@ async function renderBoard(body, project, owner) {
       const pages = await Promise.all(STATUSES.map((s) => api.get(`/projects/${project.id}/tickets`, {
         status: s, sort: CLOSED.includes(s) ? "updated_at" : "priority", limit: CLOSED.includes(s) ? 30 : 200,
         in_release: false, // tickets moved into a release leave the board
+        ...scopeParams(),
       })));
+      drawBanner();
       tickets = pages.flatMap((p) => p.items);
       totals = Object.fromEntries(STATUSES.map((s, i) => [s, pages[i].total]));
       drawToolbar();
@@ -169,6 +197,11 @@ async function renderBoard(body, project, owner) {
       onclick: () => { filter.person = filter.person === key ? "" : key; drawToolbar(); draw(); },
     }, content);
     clear(toolbar,
+      sprints.length > 0 && select("sprint", [
+        ...(activeSprint ? [["active", `Active: ${activeSprint.name}`]] : []),
+        ["all", "All tickets"], ["backlog", "Backlog"],
+        ...sprints.filter((x) => x.status === "planned").map((x) => [String(x.id), x.name]),
+      ], sprintScope, { "aria-label": "Sprint", onchange: (e) => { sprintScope = e.target.value; tickets = []; load(); } }),
       search,
       h("div.person-filters", { role: "group", "aria-label": "Filter by assignee" },
         [...people.values()].sort((a, b) => a.name.localeCompare(b.name)).map((u) => personBtn(String(u.id), avatar(u, "sm"), u.name)),
