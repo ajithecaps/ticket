@@ -114,39 +114,95 @@ export async function renderProject(main, id, tab) {
 }
 
 async function renderBoard(body, project, owner) {
-  const filterBar = h("div.board-filters");
   const board = h("div.board");
-  clear(body, filterBar, board);
+  const toolbar = h("div.board-toolbar");
+  clear(body, toolbar, board);
 
-  let mineOnly = false;
+  const PRIORITY_RANK = { critical: 4, high: 3, medium: 2, low: 1 };
+  const filter = { q: "", person: "", mine: false, priority: "" };
   let tickets = [];
+  let totals = {};
+  let dragging = null;
 
   async function load() {
-    clear(board, spinner());
+    if (!tickets.length) clear(board, spinner());
     try {
-      // One page of up to 200 per status keeps "done" from crowding out active work.
+      // One page per status; finished columns only need the most recent ones.
       const pages = await Promise.all(STATUSES.map((s) => api.get(`/projects/${project.id}/tickets`, {
         status: s, sort: CLOSED.includes(s) ? "updated_at" : "priority", limit: CLOSED.includes(s) ? 30 : 200,
-        assignee_id: mineOnly ? auth.user.id : undefined,
         in_release: false, // tickets moved into a release leave the board
       })));
       tickets = pages.flatMap((p) => p.items);
-      draw(pages.map((p) => p.total));
+      totals = Object.fromEntries(STATUSES.map((s, i) => [s, pages[i].total]));
+      drawToolbar();
+      draw();
     } catch (err) { clear(board, errorBox(err)); }
   }
 
-  function draw(totals) {
-    clear(board, STATUSES.map((s, i) => {
-      const items = tickets.filter((t) => t.status === s);
-      const col = h(`section.column.col-${s}`, { dataset: { status: s } },
-        h("header", h(`i.status-dot.status-${s}`), h("span", label(s)), h("span.muted", String(totals[i]))),
-        owner && CLOSED.includes(s) && items.length > 0 && h("button.btn.sm.col-action", {
-          title: "Move these finished tickets into a release",
-          onclick: () => addToReleaseDialog(project.id, { preselect: items.map((t) => t.id), onDone: () => load() }),
-        }, "🚀 Move to release"),
-        h("div.cards", items.map(card), !items.length && h("p.muted.small.center", "No tickets"),
-          totals[i] > items.length && h("a.small.center.more", { href: `#/projects/${project.id}/list?status=${s}` }, `+${totals[i] - items.length} more`)));
-      col.addEventListener("dragover", (e) => { e.preventDefault(); col.classList.add("drop"); });
+  const matches = (t) => {
+    if (filter.mine && t.assignee?.id !== auth.user.id) return false;
+    if (filter.person === "none" ? t.assignee : filter.person && String(t.assignee?.id) !== filter.person) return false;
+    if (filter.priority && t.priority !== filter.priority) return false;
+    if (filter.q) {
+      const q = filter.q.toLowerCase();
+      if (!t.key.toLowerCase().includes(q) && !t.title.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  };
+  const filtering = () => Boolean(filter.q || filter.person || filter.mine || filter.priority);
+
+  // ------------------------------------------------------------- toolbar
+  let searchTimer;
+  const search = h("input.board-search", {
+    type: "search", placeholder: "Filter cards…", "aria-label": "Filter cards",
+    oninput: (e) => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { filter.q = e.target.value.trim(); draw(); }, 120); },
+  });
+  function drawToolbar() {
+    const people = new Map();
+    tickets.forEach((t) => { if (t.assignee) people.set(t.assignee.id, t.assignee); });
+    const unassigned = tickets.some((t) => !t.assignee);
+    const personBtn = (key, content, title) => h("button.person-filter", {
+      type: "button", title, "aria-pressed": String(filter.person === key),
+      onclick: () => { filter.person = filter.person === key ? "" : key; drawToolbar(); draw(); },
+    }, content);
+    clear(toolbar,
+      search,
+      h("div.person-filters", { role: "group", "aria-label": "Filter by assignee" },
+        [...people.values()].sort((a, b) => a.name.localeCompare(b.name)).map((u) => personBtn(String(u.id), avatar(u, "sm"), u.name)),
+        unassigned && personBtn("none", avatar(null, "sm"), "Unassigned")),
+      select("priority", [["", "Any priority"], ["critical", "Critical"], ["high", "High"], ["medium", "Medium"], ["low", "Low"]], filter.priority,
+        { "aria-label": "Priority", onchange: (e) => { filter.priority = e.target.value; draw(); } }),
+      h("label.check", h("input", { type: "checkbox", checked: filter.mine, onchange: (e) => { filter.mine = e.target.checked; draw(); } }), "Only mine"),
+      filtering() && h("button.btn.sm.ghost", { onclick: () => { Object.assign(filter, { q: "", person: "", mine: false, priority: "" }); search.value = ""; drawToolbar(); draw(); } }, "Clear"),
+      h("span.board-hint.muted.small", owner ? "Drag cards between columns. Verify finished work, then ship it in a release." : "Drag cards between columns. Done goes to the owner for verification."));
+  }
+
+  // ------------------------------------------------------------- columns
+  function draw() {
+    const shown = tickets.filter(matches);
+    clear(board, STATUSES.map((s) => {
+      const items = shown.filter((t) => t.status === s)
+        .sort((a, b) => CLOSED.includes(s) ? 0 : (PRIORITY_RANK[b.priority] - PRIORITY_RANK[a.priority]) || dueOf(a) - dueOf(b));
+      const all = tickets.filter((t) => t.status === s);
+      const count = filtering() ? `${items.length}/${totals[s]}` : String(totals[s]);
+      const hidden = totals[s] - all.length;
+
+      const col = h(`section.column.col-${s}`, { dataset: { status: s }, "aria-label": label(s) },
+        h("header.col-head",
+          h(`i.status-dot.status-${s}`), h("span.col-name", label(s)), h("span.col-count", count),
+          owner && CLOSED.includes(s) && all.length > 0 && h("button.icon-btn.col-release", {
+            title: "Move these finished tickets into a release", "aria-label": "Move to release",
+            onclick: () => addToReleaseDialog(project.id, { preselect: all.map((t) => t.id), onDone: () => load() }),
+          }, "🚀")),
+        h("div.col-body",
+          items.map(card),
+          !items.length && h("div.col-empty", filtering() ? "No matching cards" : s === "todo" ? "Nothing to do" : "Drop cards here"),
+          hidden > 0 && !filtering() && h("a.col-more", { href: `#/projects/${project.id}/list?status=${s}` }, `+${hidden} more in the list`),
+          s === "todo" && project.is_active && h("button.col-add", {
+            type: "button", onclick: () => newTicketDialog([project], project.id, { owner }),
+          }, "+ New ticket")));
+
+      col.addEventListener("dragover", (e) => { if (dragging) { e.preventDefault(); col.classList.add("drop"); } });
       col.addEventListener("dragleave", (e) => { if (!col.contains(e.relatedTarget)) col.classList.remove("drop"); });
       col.addEventListener("drop", (e) => {
         e.preventDefault();
@@ -158,10 +214,14 @@ async function renderBoard(body, project, owner) {
     }));
   }
 
+  const dueOf = (t) => (t.due_date ? new Date(t.due_date).getTime() : Infinity);
+
   async function move(t, status) {
     const prev = t.status;
     t.status = status;
-    draw(STATUSES.map((s) => tickets.filter((x) => x.status === s).length));
+    totals[prev] -= 1;
+    totals[status] += 1;
+    draw();
     try {
       await api.post(`/tickets/${t.id}/status`, { status });
       toast(`${t.key} → ${label(status)}`);
@@ -172,25 +232,46 @@ async function renderBoard(body, project, owner) {
     load();
   }
 
+  // ------------------------------------------------------------- card
+  function dueChip(t) {
+    if (!t.due_date) return null;
+    const due = new Date(t.due_date);
+    const days = Math.ceil((due - Date.now()) / 86400000);
+    const finished = CLOSED.includes(t.status);
+    const tone = finished ? "" : t.is_overdue ? ".overdue" : days <= 2 ? ".soon" : "";
+    const text = finished ? fmtShort(due) : t.is_overdue ? `${fmtShort(due)} · ${-days || 1}d late` : days <= 1 ? (days <= 0 ? "Due today" : "Due tomorrow") : fmtShort(due);
+    return h(`span.chip-due${tone}`, { title: `Due ${fmtDate(t.due_date)}` }, "📅 ", text);
+  }
+  const fmtShort = (d) => d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+
   function card(t) {
-    return h("a.ticket-card", {
-      href: `#/tickets/${t.key}`, draggable: "true",
-      ondragstart: (e) => { e.dataTransfer.setData("text/plain", String(t.id)); e.dataTransfer.effectAllowed = "move"; },
+    const pct = t.estimated_hours ? Math.min(100, Math.round(((t.spent_hours || 0) / t.estimated_hours) * 100)) : null;
+    const el = h(`a.ticket-card.prio-edge-${t.priority}`, {
+      href: `#/tickets/${t.key}`, draggable: "true", title: t.title,
+      ondragstart: (e) => {
+        dragging = t;
+        e.dataTransfer.setData("text/plain", String(t.id));
+        e.dataTransfer.effectAllowed = "move";
+        requestAnimationFrame(() => el.classList.add("is-dragging"));
+      },
+      ondragend: () => { dragging = null; el.classList.remove("is-dragging"); document.querySelectorAll(".column.drop").forEach((c) => c.classList.remove("drop")); },
     },
-    h("div.row.between", h("span.key", t.key), typeBadge(t.type)),
-    h("p", t.title),
-    h("div.row.between",
-      priorityBadge(t.priority),
-      h("div.row",
-        t.due_date && h(`span.small${t.is_overdue ? ".danger-text" : ".muted"}`, fmtDate(t.due_date)),
-        avatar(t.assignee, "sm"))));
+    h("div.tc-top",
+      h("span.key", t.key),
+      typeBadge(t.type),
+      t.reopen_count > 0 && h("span.tc-flag", { title: `Reopened ${t.reopen_count}×` }, `↺${t.reopen_count}`),
+      h("span.tc-prio", priorityBadge(t.priority))),
+    h("p.tc-title", t.title),
+    h("div.tc-foot",
+      h("div.tc-meta",
+        dueChip(t),
+        pct !== null && h("span.tc-time", { title: `${t.spent_hours || 0}h logged of ${t.estimated_hours}h estimated` },
+          h("span.tc-bar", h("i", { class: pct >= 100 ? "over" : "", style: { width: `${pct}%` } })),
+          `${Math.round((t.spent_hours || 0) * 10) / 10}/${t.estimated_hours}h`)),
+      avatar(t.assignee, "sm")));
+    return el;
   }
 
-  clear(filterBar,
-    h("label.check", h("input", { type: "checkbox", onchange: (e) => { mineOnly = e.target.checked; load(); } }), "Only my tickets"),
-    h("span.muted.small", owner
-      ? "Drag a card to change its status. Review tickets in Done, then move them to Verified."
-      : "Drag a card to change its status. Move finished work to Done for the owner to verify."));
   await load();
 }
 
