@@ -4,7 +4,7 @@ import { getTheme, onThemeChange, setTheme } from "./theme.js";
 import { icon } from "./icons.js";
 import { MOD, configurePalette, installShortcuts, openPalette, showShortcuts } from "./palette.js";
 import { newTicketDialog } from "./views/ticket.js";
-import { avatar, busy, clear, errorBox, field, h, label, modal, spinner, toast } from "./ui.js";
+import { avatar, busy, clear, errorBox, field, h, label, modal, progress, spinner, toast } from "./ui.js";
 import { renderDashboard } from "./views/dashboard.js";
 import { renderTickets } from "./views/tickets.js";
 import { renderProjects, renderProject } from "./views/projects.js";
@@ -18,6 +18,7 @@ import { renderReleaseDetail, renderReleasesPage } from "./views/releases.js";
 import { renderTimeline } from "./views/timeline.js";
 import { renderDocEditor, renderDocHistory, renderDocPage, renderDocsHome } from "./views/docs.js";
 import { ATTENTION, attentionCounts, renderAttention } from "./views/attention.js";
+import { renderLoginPage } from "./views/login.js";
 
 const root = document.getElementById("app");
 const isAdmin = () => auth.user?.role === "admin";
@@ -89,11 +90,17 @@ async function route() {
     if (!m) continue;
     if (adminOnly && !isAdmin()) break;
     clear(main, spinner());
+    progress.start();
     try {
       cleanup = await handler(main, m.slice(1));
     } catch (err) {
       clear(main, errorBox(err));
     }
+    progress.done();
+    // replay the entrance animation for the new page
+    main.classList.remove("page-enter");
+    void main.offsetWidth;
+    main.classList.add("page-enter");
     main.focus({ preventScroll: true });
     window.scrollTo(0, 0);
     refreshAttention().catch(() => {});
@@ -312,39 +319,16 @@ function logout() {
 // ----------------------------------------------------------------------------- login
 function renderLogin(message) {
   bell?.stop();
-  const error = h("div.alert.error", { hidden: !message }, message || "");
-  const form = h("form.form",
-    field("E-mail", h("input", { type: "email", name: "email", required: true, autocomplete: "username", autofocus: true })),
-    field("Password", h("input", { type: "password", name: "password", required: true, autocomplete: "current-password" })),
-    error,
-    h("button.btn.primary.block", { type: "submit" }, "Sign in"),
-  );
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const { email, password } = Object.fromEntries(new FormData(form));
-    const btn = form.querySelector("button");
-    btn.disabled = true;
-    error.hidden = true;
-    try {
-      await api.login(email, password);
+  renderLoginPage(root, {
+    message,
+    onSuccess: () => {
       loadProjectKeys();
       clear(root);
+      document.body.classList.add("app-enter");
+      setTimeout(() => document.body.classList.remove("app-enter"), 900);
       route();
-    } catch (err) {
-      error.textContent = err.message;
-      error.hidden = false;
-    } finally {
-      btn.disabled = false;
-    }
+    },
   });
-  clear(root,
-    h("div.login",
-      h("div.login-card",
-        h("div.brand.center", h("span.logo", icon("tickets", { size: 22 })), h("span", "Developer Ticket System")),
-        h("p.muted.center", "Sign in with your work e-mail."),
-        form,
-      )));
-  form.querySelector("input").focus();
 }
 
 // Markdown turns "PAY-12" into a link only for projects the viewer can see.

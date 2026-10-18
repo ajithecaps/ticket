@@ -1,5 +1,5 @@
 import { api, auth } from "../api.js";
-import { STATUSES, avatar, clear, h, label, priorityBadge, spinner } from "../ui.js";
+import { STATUSES, avatar, clear, countUp, h, label, priorityBadge, spinner } from "../ui.js";
 import { lineChart, sparkline, stackedBars } from "../charts.js";
 import { ticketTable } from "./ticketlist.js";
 
@@ -206,6 +206,10 @@ export async function renderDashboard(main) {
       h("div.dash-grid", trendCard, mixCard),
       workloadCard ? h("div.dash-grid", workloadCard, h("div.dash-stack", dueCard, releaseCard)) : h("div.dash-grid.even", dueCard, releaseCard || feedCard),
       h("div.dash-grid", mineCard, workloadCard ? feedCard : (releaseCard ? feedCard : null)));
+    body.classList.remove("dash-enter");
+    void body.offsetWidth;
+    body.classList.add("dash-enter");
+    countUp(body);
   }
 
   const first = auth.user.name.split(/\s+/)[0];

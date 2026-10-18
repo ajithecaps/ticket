@@ -316,3 +316,44 @@ export function userPicker(lookup, onPick, opts = {}) {
   if (opts.initial) input.value = opts.initial.name;
   return wrap;
 }
+
+// ----------------------------------------------------------------------------- motion helpers
+const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/** Animate whole numbers inside the matched elements from 0 to their value (keeps suffixes like "d"). */
+export function countUp(root, selector = ".kpi-value, .stat-value") {
+  if (reducedMotion()) return;
+  root.querySelectorAll(selector).forEach((el) => {
+    const m = /^(\d+)(.*)$/.exec(el.textContent.trim());
+    if (!m) return;
+    const target = Number(m[1]);
+    if (target < 2) return;
+    const suffix = m[2];
+    const start = performance.now();
+    const dur = Math.min(900, 400 + target * 12);
+    const tick = (now) => {
+      const p = Math.min(1, (now - start) / dur);
+      el.textContent = `${Math.round(target * (1 - (1 - p) ** 3))}${suffix}`;
+      if (p < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+}
+
+/** Thin progress bar along the top of the window while a page loads. */
+let barEl = null;
+let barTimer = null;
+export const progress = {
+  start() {
+    if (!barEl) { barEl = h("div.route-progress"); document.body.append(barEl); }
+    clearTimeout(barTimer);
+    barEl.className = "route-progress";
+    void barEl.offsetWidth;
+    barEl.classList.add("run");
+  },
+  done() {
+    if (!barEl) return;
+    barEl.classList.add("finish");
+    barTimer = setTimeout(() => { barEl.className = "route-progress"; }, 450);
+  },
+};
