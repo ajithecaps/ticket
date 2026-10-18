@@ -206,7 +206,9 @@ export async function renderTicket(main, key) {
   function drawDescription() {
     const view = () => clear(description,
       h("div.card-head", h("h2", "Description"), t.can_edit && h("button.btn.sm.ghost", { onclick: edit }, "Edit")),
-      t.description ? renderMarkdown(t.description) : h("p.muted", t.can_edit ? "No description yet. Click Edit to add one." : "No description."));
+      t.description ? renderMarkdown(t.description, t.can_edit ? {
+        onTaskToggle: async (text) => { await api.patch(`/tickets/${t.id}`, { description: text }); t.description = text; },
+      } : {}) : h("p.muted", t.can_edit ? "No description yet. Click Edit to add one." : "No description."));
     const edit = () => {
       const editor = markdownEditor({ value: t.description, rows: 12, label: "Description", autofocus: true });
       clear(description,

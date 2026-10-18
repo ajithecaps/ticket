@@ -1040,3 +1040,78 @@ def test_start_date_overlaps_and_timeline(client, admin, world):
     assert client.patch(f"{API}/tickets/{a['id']}", headers=dev["headers"], json={"start_date": day(0)}).status_code == 403
     assert client.patch(f"{API}/tickets/{a['id']}", headers=owner["headers"], json={"start_date": day(9)}).status_code == 400
     assert client.patch(f"{API}/tickets/{a['id']}", headers=owner["headers"], json={"start_date": day(0)}).status_code == 200
+
+
+# --------------------------------------------------------------------------- #
+# Documentation
+# --------------------------------------------------------------------------- #
+def test_docs(client, admin, world):
+    ravi, asha, kiran, zed, pay = world["ravi"], world["asha"], world["kiran"], world["zed"], world["pay"]
+
+    # members write (wiki style); outsiders cannot
+    r = client.post(f"{API}/projects/{pay['id']}/docs", headers=asha["headers"],
+                    json={"title": " Architecture ", "content": "# Overview\nPayments flow through the **gateway**."})
+    assert r.status_code == 201, r.text
+    root = r.json()
+    assert root["title"] == "Architecture" and root["can_edit"] is True and root["can_delete"] is False
+    assert client.post(f"{API}/projects/{pay['id']}/docs", headers=zed["headers"], json={"title": "x"}).status_code == 404
+    child = client.post(f"{API}/projects/{pay['id']}/docs", headers=kiran["headers"],
+                        json={"title": "Refund service", "content": "Retries with backoff", "parent_id": root["id"]}).json()
+    grandchild = client.post(f"{API}/projects/{pay['id']}/docs", headers=kiran["headers"],
+                             json={"title": "Runbook", "parent_id": child["id"]}).json()
+    assert [b["title"] for b in grandchild["breadcrumbs"]] == ["Architecture", "Refund service"]
+    assert [c["title"] for c in client.get(f"{API}/docs/{root['id']}", headers=ravi["headers"]).json()["children"]] == ["Refund service"]
+
+    # parent must be in the same project; no cycles
+    other = client.post(f"{API}/projects/{world['ops']['id']}/docs", headers=kiran["headers"], json={"title": "Ops"}).json()
+    assert client.post(f"{API}/projects/{pay['id']}/docs", headers=kiran["headers"],
+                       json={"title": "bad", "parent_id": other["id"]}).status_code == 400
+    assert client.patch(f"{API}/docs/{root['id']}", headers=ravi["headers"], json={"parent_id": grandchild["id"]}).status_code == 400
+
+    # listing and search are scoped to the caller's projects
+    assert {d["title"] for d in client.get(f"{API}/docs", headers=asha["headers"]).json()} == {"Architecture", "Refund service", "Runbook"}
+    assert client.get(f"{API}/docs", headers=zed["headers"]).json() == []
+    hits = client.get(f"{API}/docs", headers=asha["headers"], params={"q": "backoff"}).json()
+    assert [h["title"] for h in hits] == ["Refund service"] and "backoff" in hits[0]["snippet"]
+    assert client.get(f"{API}/docs/{root['id']}", headers=zed["headers"]).status_code == 404
+
+    # edits keep revisions; restoring brings the old text back (and is itself revisioned)
+    client.patch(f"{API}/docs/{root['id']}", headers=kiran["headers"], json={"content": "v2"})
+    client.patch(f"{API}/docs/{root['id']}", headers=ravi["headers"], json={"title": "Architecture v3", "content": "v3"})
+    page = client.get(f"{API}/docs/{root['id']}", headers=asha["headers"]).json()
+    assert page["revision_count"] == 2 and page["editor"]["id"] == ravi["id"]
+    revs = client.get(f"{API}/docs/{root['id']}/revisions", headers=asha["headers"]).json()
+    assert [r["title"] for r in revs] == ["Architecture", "Architecture"]
+    first = client.get(f"{API}/docs/{root['id']}/revisions/{revs[-1]['id']}", headers=asha["headers"]).json()
+    assert first["content"].startswith("# Overview") and first["author"]["id"] == asha["id"]
+    restored = client.post(f"{API}/docs/{root['id']}/revisions/{revs[-1]['id']}/restore", headers=asha["headers"]).json()
+    assert restored["title"] == "Architecture" and restored["content"].startswith("# Overview") and restored["revision_count"] == 3
+    # a no-op save does not add a revision
+    client.patch(f"{API}/docs/{root['id']}", headers=asha["headers"], json={"title": "Architecture"})
+    assert client.get(f"{API}/docs/{root['id']}", headers=asha["headers"]).json()["revision_count"] == 3
+
+    # only owners delete; children move up a level
+    assert client.delete(f"{API}/docs/{child['id']}", headers=kiran["headers"]).status_code == 403
+    assert client.delete(f"{API}/docs/{child['id']}", headers=ravi["headers"]).status_code == 204
+    assert client.get(f"{API}/docs/{grandchild['id']}", headers=asha["headers"]).json()["parent_id"] == root["id"]
+
+
+def test_dashboard(client, admin, world):
+    ravi, kiran, zed, pay = world["ravi"], world["kiran"], world["zed"], world["pay"]
+    t = raise_ticket(client, ravi["headers"], pay["id"], title="Dash", assignee_id=kiran["id"], due_date=iso(days=2), estimated_hours=5)
+    set_status(client, kiran["headers"], t["id"], "in_progress")
+
+    d = client.get(f"{API}/dashboard", headers=admin, params={"days": 7}).json()
+    assert d["scope"] == "all" and len(d["trend"]) == 7 and d["trend"][-1]["created"] >= 1
+    assert d["kpis"]["open"] >= 1 and d["kpis"]["due_week"] >= 1 and "avg_cycle_days" in d["kpis"]
+    row = next(r for r in d["workload"] if r["user"]["id"] == kiran["id"])
+    assert row["by_status"]["in_progress"] >= 1 and row["remaining_hours"] >= 5
+    assert any(a["ticket"]["key"] == t["key"] for a in d["activity"])
+
+    owner = client.get(f"{API}/dashboard", headers=ravi["headers"]).json()
+    assert owner["scope"] == "owned" and {r["user"]["id"] for r in owner["workload"]} >= {kiran["id"]}
+    dev = client.get(f"{API}/dashboard", headers=kiran["headers"], params={"project_id": pay["id"]}).json()
+    assert [r["user"]["id"] for r in dev["workload"]] == [kiran["id"]] or dev["scope"] == "owned"
+    assert client.get(f"{API}/dashboard", headers=zed["headers"], params={"project_id": pay["id"]}).status_code == 404
+    empty = client.get(f"{API}/dashboard", headers=zed["headers"]).json()
+    assert empty["kpis"]["open"] == 0 and empty["workload"][0]["user"]["id"] == zed["id"]

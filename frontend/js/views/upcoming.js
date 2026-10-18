@@ -183,9 +183,9 @@ export async function renderUpcomingDetail(main, id) {
       h("div.ticket-layout",
         h("div.ticket-main",
           h("section.card", h("div.card-head", h("h2", "Requirements")),
-            t.requirements.trim() ? renderMarkdown(t.requirements) : h("p.muted", "No requirements written yet.")),
+            t.requirements.trim() ? renderMarkdown(t.requirements, t.can_edit ? { onTaskToggle: (text) => saveField("requirements", text) } : {}) : h("p.muted", "No requirements written yet.")),
           h("section.card", h("div.card-head", h("h2", "Acceptance criteria"), criteriaMeter(t)),
-            t.acceptance_criteria.trim() ? renderMarkdown(t.acceptance_criteria) : h("p.muted", "No acceptance criteria yet."))),
+            t.acceptance_criteria.trim() ? renderMarkdown(t.acceptance_criteria, t.can_edit ? { onTaskToggle: (text) => saveField("acceptance_criteria", text) } : {}) : h("p.muted", "No acceptance criteria yet."))),
         h("aside.ticket-side",
           h("section.card",
             h("div.card-head", h("h2", "References")),
@@ -212,6 +212,8 @@ export async function renderUpcomingDetail(main, id) {
   }
 
   const reload = async () => { t = await api.get(`/upcoming/${id}`); draw(); };
+  // Ticking a checklist item saves straight away; the acceptance-criteria meter follows on the next load.
+  const saveField = async (key, text) => { t = await api.patch(`/upcoming/${id}`, { [key]: text }); };
 
   async function upload(files) {
     if (!files.length) return;

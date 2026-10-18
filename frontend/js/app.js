@@ -1,4 +1,5 @@
 import { api, auth, setUnauthorizedHandler } from "./api.js";
+import { setProjectKeys } from "./markdown.js";
 import { avatar, busy, clear, errorBox, field, h, label, modal, spinner, toast } from "./ui.js";
 import { renderDashboard } from "./views/dashboard.js";
 import { renderTickets } from "./views/tickets.js";
@@ -11,6 +12,7 @@ import { renderIntegrations } from "./views/integrations.js";
 import { renderUpcomingDetail, renderUpcomingPage } from "./views/upcoming.js";
 import { renderReleaseDetail, renderReleasesPage } from "./views/releases.js";
 import { renderTimeline } from "./views/timeline.js";
+import { renderDocEditor, renderDocHistory, renderDocPage, renderDocsHome } from "./views/docs.js";
 
 const root = document.getElementById("app");
 const isAdmin = () => auth.user?.role === "admin";
@@ -21,7 +23,7 @@ const routes = [
   [/^\/tickets$/, renderTickets],
   [/^\/tickets\/([A-Za-z][A-Za-z0-9]{1,9}-\d+)$/, (el, [key]) => renderTicket(el, key)],
   [/^\/projects$/, renderProjects],
-  [/^\/projects\/(\d+)(?:\/(board|list|timeline|upcoming|releases|members|settings))?$/, (el, [id, tab]) => renderProject(el, Number(id), tab || "board")],
+  [/^\/projects\/(\d+)(?:\/(board|list|timeline|docs|upcoming|releases|members|settings))?$/, (el, [id, tab]) => renderProject(el, Number(id), tab || "board")],
   [/^\/notifications$/, renderNotifications],
   [/^\/users$/, renderUsers, true],
   [/^\/reports$/, renderReports, true],
@@ -31,6 +33,11 @@ const routes = [
   [/^\/upcoming\/(\d+)$/, (el, [id]) => renderUpcomingDetail(el, Number(id))],
   [/^\/releases$/, renderReleasesPage],
   [/^\/timeline$/, (el) => renderTimeline(el)],
+  [/^\/docs$/, (el) => renderDocsHome(el)],
+  [/^\/docs\/new$/, (el) => renderDocEditor(el, null)],
+  [/^\/docs\/(\d+)$/, (el, [id]) => renderDocPage(el, Number(id))],
+  [/^\/docs\/(\d+)\/edit$/, (el, [id]) => renderDocEditor(el, Number(id))],
+  [/^\/docs\/(\d+)\/history$/, (el, [id]) => renderDocHistory(el, Number(id))],
   [/^\/releases\/(\d+)$/, (el, [id]) => renderReleaseDetail(el, Number(id))],
 ];
 
@@ -104,6 +111,7 @@ function renderShell() {
     ["/", "Dashboard", "M3 13h8V3H3zm10 8h8V11h-8zM3 21h8v-6H3zm10-18v6h8V3z"],
     ["/tickets", "Tickets", "M4 6h16M4 12h16M4 18h10"],
     ["/projects", "Projects", "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"],
+    ["/docs", "Docs", "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 13h6M9 17h6M9 9h2"],
     ["/timeline", "Timeline", "M3 4h18v17H3zM3 9h18M8 2v4M16 2v4M7 13h5M10 17h7"],
     ["/releases", "Releases", "M4.5 16.5c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.8.7-2.1-.1-2.9a2.2 2.2 0 0 0-2.9-.1zM12 15l-3-3a22 22 0 0 1 2-3.9A12.9 12.9 0 0 1 22 2c0 2.7-.8 7.5-6 11a22.4 22.4 0 0 1-4 2zM9 12H4s.6-3 2-4c1.6-1.1 5 0 5 0m1 7v5s3-.6 4-2c1.1-1.6 0-5 0-5"],
     ["/upcoming", "Upcoming", "M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4"],
@@ -218,6 +226,7 @@ function renderLogin(message) {
     error.hidden = true;
     try {
       await api.login(email, password);
+      loadProjectKeys();
       clear(root);
       route();
     } catch (err) {
@@ -237,6 +246,11 @@ function renderLogin(message) {
   form.querySelector("input").focus();
 }
 
+// Markdown turns "PAY-12" into a link only for projects the viewer can see.
+function loadProjectKeys() {
+  api.get("/projects", { include_archived: true }).then((ps) => setProjectKeys(ps.map((p) => p.key))).catch(() => {});
+}
+
 // ----------------------------------------------------------------------------- boot
 setUnauthorizedHandler(() => {
   if (!auth.user) return;
@@ -252,6 +266,7 @@ window.addEventListener("hashchange", route);
   clear(root, spinner());
   try {
     auth.user = await api.get("/auth/me");
+    loadProjectKeys();
     route();
   } catch {
     auth.token = null;

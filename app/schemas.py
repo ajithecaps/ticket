@@ -571,3 +571,111 @@ class OverlapOut(BaseModel):
     end: datetime
     tickets: list[TimelineTicket]  # overlapping tickets the caller is allowed to see
     hidden_count: int  # overlapping tickets in projects the caller cannot see
+
+
+# --------------------------------------------------------------------------- #
+# Documentation
+# --------------------------------------------------------------------------- #
+class DocCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    content: str = Field("", max_length=200000)
+    parent_id: int | None = None
+
+    @field_validator("title")
+    @classmethod
+    def _strip_title(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("title must not be blank")
+        return v
+
+
+class DocUpdate(BaseModel):
+    title: str | None = Field(None, min_length=1, max_length=200)
+    content: str | None = Field(None, max_length=200000)
+    parent_id: int | None = None
+    position: int | None = None
+
+
+class DocBrief(ORMModel):
+    id: int
+    project: ProjectBrief
+    parent_id: int | None = None
+    title: str
+    position: int
+    editor: UserBrief | None = None
+    updated_at: datetime
+    snippet: str | None = None  # search hit context
+
+
+class DocOut(DocBrief):
+    content: str
+    creator: UserBrief | None = None
+    created_at: datetime
+    breadcrumbs: list[DocBrief] = []
+    children: list[DocBrief] = []
+    revision_count: int = 0
+    can_edit: bool = False
+    can_delete: bool = False
+
+
+class DocRevisionOut(ORMModel):
+    id: int
+    page_id: int
+    title: str
+    author: UserBrief | None = None
+    created_at: datetime
+
+
+class DocRevisionDetail(DocRevisionOut):
+    content: str
+
+
+# --------------------------------------------------------------------------- #
+# Dashboard
+# --------------------------------------------------------------------------- #
+class TrendPoint(BaseModel):
+    date: str  # YYYY-MM-DD (UTC)
+    created: int
+    completed: int
+
+
+class WorkloadRow(BaseModel):
+    user: UserBrief
+    by_status: dict[str, int]  # open statuses only
+    open: int
+    overdue: int
+    remaining_hours: float  # estimates minus time logged, open tickets
+
+
+class ActivityFeedItem(BaseModel):
+    id: int
+    actor: UserBrief | None = None
+    action: str
+    field: str | None = None
+    old_value: str | None = None
+    new_value: str | None = None
+    created_at: datetime
+    ticket: TicketRef
+    ticket_title: str
+
+
+class ReleaseLine(BaseModel):
+    id: int
+    project: ProjectBrief
+    name: str
+    planned_date: datetime | None = None
+    ticket_count: int
+
+
+class DashboardOut(BaseModel):
+    scope: str  # "all" | "owned" | "member"
+    days: int
+    kpis: dict[str, float | int | None]
+    trend: list[TrendPoint]
+    by_status: dict[str, int]
+    by_priority: dict[str, int]
+    workload: list[WorkloadRow]
+    due_soon: list[TicketOut]
+    activity: list[ActivityFeedItem]
+    releases: list[ReleaseLine]

@@ -15,7 +15,7 @@ from .database import Base, SessionLocal, engine
 from .models import Role, User
 from .jobs import scheduler
 from .routers import (
-    attachments, auth, comments, integrations, notifications, projects, releases, reports, tickets, timeline,
+    attachments, auth, comments, dashboard, docs, integrations, notifications, projects, releases, reports, tickets, timeline,
     upcoming, users,
 )
 from .security import hash_password
@@ -102,7 +102,7 @@ app.add_middleware(
 
 for module in (
     auth, users, projects, tickets, comments, attachments, notifications, reports, integrations, upcoming, releases,
-    timeline,
+    timeline, docs, dashboard,
 ):
     app.include_router(module.router, prefix=settings.API_PREFIX)
 

@@ -429,3 +429,43 @@ class Release(Base):
     creator: Mapped[User | None] = relationship(lazy="joined", foreign_keys=[created_by])
     releaser: Mapped[User | None] = relationship(lazy="joined", foreign_keys=[released_by])
     tickets: Mapped[list[Ticket]] = relationship(back_populates="release", order_by="Ticket.number")
+
+
+class DocPage(Base):
+    """A documentation page of a project (Markdown). Pages nest via parent_id; every save keeps a revision."""
+
+    __tablename__ = "doc_pages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("doc_pages.id", ondelete="SET NULL"), nullable=True, index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    content: Mapped[str] = mapped_column(Text, default="")
+    position: Mapped[int] = mapped_column(default=0)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+    project: Mapped[Project] = relationship(lazy="joined")
+    creator: Mapped[User | None] = relationship(lazy="joined", foreign_keys=[created_by])
+    editor: Mapped[User | None] = relationship(lazy="joined", foreign_keys=[updated_by])
+    revisions: Mapped[list["DocRevision"]] = relationship(
+        back_populates="page", cascade="all, delete-orphan", order_by="DocRevision.id.desc()"
+    )
+
+
+class DocRevision(Base):
+    """The previous version of a page, saved each time it is edited."""
+
+    __tablename__ = "doc_revisions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    page_id: Mapped[int] = mapped_column(ForeignKey("doc_pages.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    content: Mapped[str] = mapped_column(Text, default="")
+    edited_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+    page: Mapped[DocPage] = relationship(back_populates="revisions")
+    author: Mapped[User | None] = relationship(lazy="joined", foreign_keys=[edited_by])

@@ -203,7 +203,7 @@ app/
   routers/upcoming.py  upcoming tasks (requirements before tickets)
   routers/releases.py  releases: finished tickets shipped to production
   routers/timeline.py  timeline (gantt) and overlap check; schedule.py has the window logic
-migrations/        Alembic environment and versions (0001 baseline, 0002 upcoming, 0003 releases, 0004 start date)
+migrations/        Alembic environment and versions (0001 baseline … 0005 docs)
   routers/         auth, users, projects, tickets, comments, attachments, notifications, reports
 frontend/          single-page web UI (plain HTML/CSS/JS modules, no build step), served at /
 tests/             14 end-to-end tests against the real API
@@ -265,6 +265,36 @@ acceptance criteria (a checklist with a progress meter), reference links and doc
 - API: `GET /upcoming` · `GET|POST /projects/{id}/upcoming` · `GET|PATCH|DELETE /upcoming/{id}` ·
   `POST /upcoming/{id}/documents` · `GET /upcoming-documents/{id}/download` ·
   `DELETE /upcoming-documents/{id}` · `POST /upcoming/{id}/convert`
+
+## Documentation
+
+Every project has **Docs**: Markdown pages that nest into a tree (sidebar **Docs**, or the project's
+**Docs** tab). Pages show breadcrumbs, a table of contents and their sub-pages; search covers titles and
+content. Any project member can create and edit pages (wiki-style); project owners and admins can delete
+them (sub-pages move up a level). **Every save keeps the previous version** - *History* shows each one
+and can restore it. API: `GET /docs?project_id=&q=` · `POST /projects/{id}/docs` · `GET|PATCH|DELETE /docs/{id}` ·
+`GET /docs/{id}/revisions` · `GET /docs/{id}/revisions/{rev}` · `POST /docs/{id}/revisions/{rev}/restore`.
+
+## Markdown
+
+Descriptions, comments, docs, requirements and release notes all use the same Markdown, rendered by
+[frontend/js/markdown.js](frontend/js/markdown.js): GitHub-flavoured Markdown (tables, task lists,
+strikethrough, autolinks) plus footnotes, `==highlight==`, `$math$` / `$$math$$` (KaTeX), ```` ```mermaid ````
+diagrams, syntax-highlighted code with a copy button, `> [!NOTE]` / `[!TIP]` / `[!WARNING]` /
+`[!IMPORTANT]` / `[!CAUTION]` callouts, `<details>` sections, `:emoji:` shortcodes, heading anchors, and
+ticket keys (`PAY-12`) as links. Checklists in ticket descriptions, docs and upcoming tasks can be ticked
+straight from the page. Output is sanitised with DOMPurify. The editor has Write / Split / Preview, full
+screen, a `/` insert menu, list continuation, Tab indenting and Ctrl/⌘ shortcuts.
+highlight.js, KaTeX and Mermaid live in `frontend/vendor/` and load only when a note uses them.
+
+## Dashboard
+
+`GET /dashboard?days=7|30|90&project_id=` returns everything the dashboard shows in one call: KPI tiles
+(open, in progress, overdue, due in 7 days, completed and created with the change vs the previous period,
+average cycle time, awaiting verification), a created-vs-completed trend, open work by status and priority,
+team workload per person (open tickets by status, overdue, hours left), tickets due this week, upcoming
+releases and recent activity. Scope: admin - everything; project owners - their projects and team;
+developers - their projects and their own workload.
 
 ## Timeline and overlap checks
 
