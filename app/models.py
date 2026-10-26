@@ -653,3 +653,13 @@ class ChatCallInvite(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     invited_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     invited_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class ChatSaved(Base):
+    """A message someone bookmarked for themselves ("Saved items")."""
+
+    __tablename__ = "chat_saved"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    message_id: Mapped[int] = mapped_column(ForeignKey("chat_messages.id", ondelete="CASCADE"), primary_key=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)

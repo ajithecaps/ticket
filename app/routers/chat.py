@@ -29,6 +29,7 @@ from ..models import (
     ChatMember,
     ChatMessage,
     ChatReaction,
+    ChatSaved,
     NotificationType,
     Project,
     ProjectMember,
@@ -851,6 +852,121 @@ def download_file(file_id: int, user: CurrentUser, db: DbSession, inline: bool =
     return FileResponse(path, media_type=f.content_type if show else "application/octet-stream", filename=f.filename,
                         content_disposition_type="inline" if show else "attachment",
                         headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=86400"})
+
+
+# --------------------------------------------------------------------------- #
+# Personal space: notes to self, saved items, links
+# --------------------------------------------------------------------------- #
+_URL = re.compile(r"https?://[^\s<>()\[\]\"'`]+[^\s<>()\[\]\"'`.,;:!?]")
+_MD_LINK = re.compile(r"\[([^\]\n]{1,200})\]\((https?://[^)\s]+)\)")
+
+
+def _links_in(body: str) -> list[tuple[str, str | None]]:
+    """[(url, link text or None)] in order, without duplicates; code is ignored."""
+    text = re.sub(r"```.*?```|`[^`\n]*`", " ", body or "", flags=re.S)
+    out: dict[str, str | None] = {}
+    for label, url in _MD_LINK.findall(text):
+        out.setdefault(url, label.strip())
+    for url in _URL.findall(_MD_LINK.sub(" ", text)):
+        out.setdefault(url, None)
+    return list(out.items())
+
+
+def _self_dm(db: Session, user: User) -> ChatChannel:
+    mine = select(ChatMember.channel_id).where(ChatMember.user_id == user.id)
+    counts = (
+        select(ChatMember.channel_id).join(ChatChannel, ChatChannel.id == ChatMember.channel_id)
+        .where(ChatChannel.kind == "dm", ChatMember.channel_id.in_(mine))
+        .group_by(ChatMember.channel_id).having(func.count() == 1)
+    )
+    cid = db.scalar(counts)
+    if cid is not None:
+        return db.get(ChatChannel, cid)
+    ch = ChatChannel(kind="dm", is_private=True, created_by=user.id, topic="Notes, links and files just for you")
+    db.add(ch)
+    db.flush()
+    db.add(ChatMember(channel_id=ch.id, user_id=user.id))
+    db.commit()
+    return ch
+
+
+@router.post("/self", summary="My own space (notes to self) - created on first use")
+def notes_to_self(user: CurrentUser, db: DbSession):
+    return get_channel(_self_dm(db, user).id, user, db)
+
+
+@router.post("/messages/{message_id}/save", summary="Save or unsave a message for yourself")
+def toggle_saved(message_id: int, user: CurrentUser, db: DbSession):
+    msg, _ch = _message_or_404(db, message_id, user)
+    row = db.get(ChatSaved, (user.id, msg.id))
+    if row:
+        db.delete(row)
+    else:
+        if msg.deleted:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "This message was deleted")
+        db.add(ChatSaved(user_id=user.id, message_id=msg.id))
+    emit(db, "saved", {"message_id": msg.id, "saved": row is None}, user_ids=[user.id])
+    db.commit()
+    return {"message_id": msg.id, "saved": row is None}
+
+
+@router.get("/saved/ids", summary="Ids of messages I saved")
+def saved_ids(user: CurrentUser, db: DbSession):
+    return list(db.scalars(select(ChatSaved.message_id).where(ChatSaved.user_id == user.id)))
+
+
+def _where(db: Session, ch: ChatChannel, user: User) -> dict:
+    members = list(db.scalars(select(User).join(ChatMember, ChatMember.user_id == User.id).where(ChatMember.channel_id == ch.id))) if ch.kind == "dm" else []
+    return {"id": ch.id, "kind": ch.kind, "display_name": _display_name(ch, members, user)}
+
+
+@router.get("/saved", summary="My saved items (messages, files and links), newest first")
+def saved_items(
+    user: CurrentUser, db: DbSession,
+    kind: Annotated[str, Query(pattern="^(all|links|files)$")] = "all",
+    q: str = "",
+):
+    rows = db.execute(
+        select(ChatSaved, ChatMessage).join(ChatMessage, ChatMessage.id == ChatSaved.message_id)
+        .where(ChatSaved.user_id == user.id, ChatMessage.deleted.is_(False)).order_by(ChatSaved.created_at.desc()).limit(500)
+    ).unique().all()
+    out, cache = [], {}
+    for saved, m in rows:
+        if m.channel_id not in cache:
+            ch = db.get(ChatChannel, m.channel_id)
+            cache[m.channel_id] = _where(db, ch, user) if ch and _can_read(db, ch, user) else None
+        where = cache[m.channel_id]
+        if where is None:
+            continue  # lost access to that conversation
+        links = _links_in(m.body)
+        if kind == "links" and not links:
+            continue
+        if kind == "files" and not m.files:
+            continue
+        if q and q.lower() not in (m.body or "").lower() and not any(q.lower() in f.filename.lower() for f in m.files):
+            continue
+        out.append({**_message_out(m), "saved_at": saved.created_at, "channel": where,
+                    "links": [{"url": u, "text": t} for u, t in links]})
+    return out
+
+
+@router.get("/channels/{channel_id}/links", summary="Links shared in a conversation")
+def channel_links(channel_id: int, user: CurrentUser, db: DbSession):
+    ch = _channel_or_404(db, channel_id, user)
+    rows = db.scalars(
+        select(ChatMessage).where(ChatMessage.channel_id == ch.id, ChatMessage.deleted.is_(False),
+                                  or_(ChatMessage.body.like("%http://%"), ChatMessage.body.like("%https://%")))
+        .order_by(ChatMessage.id.desc()).limit(1000)
+    ).unique().all()
+    out, seen = [], set()
+    for m in rows:
+        for url, text in _links_in(m.body):
+            if url in seen:
+                continue
+            seen.add(url)
+            out.append({"url": url, "text": text, "message_id": m.id, "parent_id": m.parent_id,
+                        "user": _brief(m.user), "created_at": m.created_at, "pinned": m.pinned})
+    return out
 
 
 # --------------------------------------------------------------------------- #
