@@ -2525,3 +2525,18 @@ body.pv-open { overflow: hidden; }
   .dl-hero { flex-direction: column; align-items: flex-start; padding: 20px; }
   .dl-logo { width: 64px; height: 64px; }
 }
+
+/* ringtone picker */
+.ringtone-list { display: flex; flex-direction: column; gap: 6px; margin: 12px 0 4px; }
+.ringtone-opt { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; }
+.ringtone-opt:hover { background: var(--surface-2); }
+.ringtone-opt.on { border-color: var(--accent); background: var(--accent-soft); }
+.ringtone-opt input { accent-color: var(--accent); margin: 0; }
+.ringtone-text { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+/* weak-connection indicators */
+.call-net { cursor: help; }
+.call-net-note { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: rgba(240, 68, 56, .2); color: #fda29b; white-space: nowrap; }
+.call-tile-weak { position: absolute; top: 10px; left: 10px; z-index: 2; display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px 3px 7px; border-radius: 999px;
+  background: rgba(16, 18, 24, .72); color: #fff; font-size: 12px; backdrop-filter: blur(6px); }
+.call-ui.mini .call-tile-weak { font-size: 0; gap: 0; padding: 4px; }

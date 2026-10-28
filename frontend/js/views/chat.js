@@ -6,7 +6,7 @@ import { icon } from "../icons.js";
 import { realtime } from "../realtime.js";
 import { EMOJI, QUICK_REACTIONS, recentEmoji, rememberEmoji, searchEmoji } from "../emoji.js";
 import { activeCalls, callsSupported, currentCall, fmtDuration, initCalls, join as joinCall, onCallsChange, startCall, stopCalls } from "../calls.js";
-import { prefs, sounds } from "../sounds.js";
+import { RINGTONES, prefs, sounds } from "../sounds.js";
 import { fileCard as previewCard, files as previewFiles, openPreview } from "../preview.js";
 import {
   avatar, busy, clear, confirmDialog, copyText, emptyState, errorBox, field, fmtBytes, h, modal, parseDate,
@@ -490,6 +490,32 @@ function emojiPicker(anchor, onPick) {
   return pop;
 }
 
+/** Pick the incoming-call ringtone, with a preview of each. */
+function ringtoneDialog() {
+  const current = () => (prefs.get("ringtone") ? prefs.get("ringtoneStyle") || "aurora" : "off");
+  const options = [...Object.entries(RINGTONES), ["off", { label: "Silent", hint: "Only the on-screen card and notification" }]];
+  const list = h("div.ringtone-list", { role: "radiogroup", "aria-label": "Ringtone" });
+  const paint = () => clear(list, options.map(([key, t]) => h(`label.ringtone-opt${current() === key ? ".on" : ""}`,
+    h("input", {
+      type: "radio", name: "ringtone", value: key, checked: current() === key,
+      onchange: () => {
+        prefs.set("ringtone", key !== "off");
+        if (key !== "off") { prefs.set("ringtoneStyle", key); sounds.previewRing(key); } else sounds.stopRing();
+        paint();
+      },
+    }),
+    h("span.ringtone-text", h("strong", t.label), h("span.muted.small", t.hint)),
+    key === "off" ? null : h("button.icon-btn.sm.ringtone-play", {
+      type: "button", title: `Play ${t.label}`, "aria-label": `Play ${t.label}`,
+      onclick: (e) => { e.preventDefault(); sounds.previewRing(key); },
+    }, icon("volume", { size: 15 })))));
+  paint();
+  const m = modal("Call ringtone", h("div",
+    h("p.muted.small", "Plays when someone calls you. It starts softly and gets a little louder until you answer."),
+    list,
+    h("div.form-actions", h("button.btn.primary", { type: "button", onclick: () => { sounds.stopRing(); m.close(); } }, "Done"))));
+}
+
 function menu(anchor, items) {
   const pop = popover(anchor, h("div.chat-menu", items.filter(Boolean).map((it) => it === "-" ? h("hr") :
     h(`button${it.danger ? ".danger" : ""}`, { type: "button", onclick: () => { pop.close(); it.run(); } },
@@ -877,7 +903,7 @@ class ChatView {
     const canAsk = "Notification" in window && Notification.permission !== "granted";
     menu(anchor, [
       { icon: prefs.get("sounds") ? "volume" : "volume-off", label: "Message sounds", hint: tick("sounds"), run: flip("sounds", "Message sounds on", "Message sounds off") },
-      { icon: "phone", label: "Call ringtone", hint: tick("ringtone"), run: flip("ringtone", "Ringtone on", "Ringtone off") },
+      { icon: "phone", label: "Call ringtone", hint: prefs.get("ringtone") ? (RINGTONES[prefs.get("ringtoneStyle")] || RINGTONES.aurora).label : "Off", run: ringtoneDialog },
       { icon: "sparkles", label: "Animated effects", hint: tick("effects"), run: flip("effects", "Emoji effects on 🎉", "Effects off") },
       { icon: "bell", label: "Play a test sound", run: () => sounds.test() },
       canAsk ? {

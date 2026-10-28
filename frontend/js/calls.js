@@ -4,6 +4,11 @@
 // Clarity: 48 kHz mono Opus with echo cancellation, noise suppression and auto gain (switchable),
 // higher audio bitrate, HD/Full-HD camera presets, screen sharing tuned for sharp text, live
 // speaking indicators, device pickers (mic, camera, speaker) and automatic ICE restarts.
+//
+// Weak connections: every link is measured every 2 s (packet loss, round-trip time, bandwidth). Video
+// steps down smoothly (lower resolution and frame rate first, then a lower bitrate), and on a very bad
+// link it pauses so the voice stays clear, coming back by itself once the line recovers. Voice is
+// protected with redundant packets (RED) plus Opus FEC, and DTX sends nothing during silence.
 import { api, auth } from "./api.js";
 import { icon } from "./icons.js";
 import { realtime } from "./realtime.js";
@@ -16,6 +21,15 @@ const QUALITY = {
   fhd: { label: "Full HD (1080p)", width: 1920, height: 1080, fps: 30, bitrate: 3_500_000 },
 };
 const AUDIO_BITRATE = 64_000;
+// Sending tiers per connection. Each step down trades sharpness for smoothness; "bad" keeps voice only.
+const TIERS = ["good", "fair", "poor", "bad"];
+const TIER = {
+  good: { scale: 1, fps: null, share: 1, audio: AUDIO_BITRATE, video: true },
+  fair: { scale: 1.5, fps: 24, share: 0.5, audio: 48_000, video: true },
+  poor: { scale: 2.5, fps: 15, share: 0.22, audio: 32_000, video: true },
+  bad: { scale: 4, fps: 8, share: 0.08, audio: 24_000, video: false },
+};
+const STATS_EVERY_MS = 2000;
 // In-call reactions: shown floating up from the sender's tile for everyone in the call.
 const CALL_REACTIONS = ["👍", "❤️", "😂", "🎉", "👏", "😮", "🔥", "🙌", "💯", "🚀", "😢", "🤔"];
 const SHOWER = /🎉|🔥|❤️|🚀|💯|👏/u;
@@ -85,6 +99,9 @@ function hangUpOnUnload() {
     fetch(`/api/v1/chat/calls/${state.call.id}/leave`, { method: "POST", keepalive: true, headers: { Authorization: `Bearer ${auth.token}` } });
   } catch { /* closing anyway */ }
 }
+
+// Wi-Fi dropped and came back, or the laptop woke up: repair the links straight away.
+window.addEventListener("online", () => state?.peers.forEach((p) => p.restartIfBroken()));
 
 // ============================================================================ events
 function onEvent(ev) {
@@ -272,7 +289,7 @@ async function enter(call, media, { label, video, outgoing = false, channelId })
   }
   state = {
     call, label, channelId: channelId ?? call.channel_id,
-    local: media, screen: null, peers: new Map(), remoteState: new Map(),
+    local: media, screen: null, peers: new Map(), remoteState: new Map(), remoteNet: new Map(), netNotice: "good",
     mic: true, cam: Boolean(video && media.getVideoTracks().length),
     startedAt: call.answered_at ? Date.now() : null,
     outgoing, minimized: false, layout: "grid", pinned: null, speaking: new Map(),
@@ -280,6 +297,7 @@ async function enter(call, media, { label, video, outgoing = false, channelId })
   };
   buildUi();
   watchLevel(me().id, media);
+  startNetworkWatch();
   if (outgoing) {
     sounds.ringback();
     state.ringTimer = setTimeout(() => {
@@ -318,6 +336,7 @@ function syncParticipants(call, ev = {}) {
     }
   }
   if (ev.joined && ev.joined !== me().id) sounds.join();
+  state.peers.forEach((p) => p.tune()); // the upload is shared differently now
   renderTiles();
 }
 
@@ -341,6 +360,11 @@ function onSignal(from, data) {
     renderTiles();
     return;
   }
+  if (data.net) {
+    if (TIERS.includes(data.net)) state.remoteNet.set(from, data.net);
+    renderTiles();
+    return;
+  }
   if (data.reaction) {
     if (CALL_REACTIONS.includes(data.reaction)) showReaction(from, data.reaction);
     return;
@@ -358,9 +382,15 @@ class Peer {
     this.stream = new MediaStream();
     this.pc = new RTCPeerConnection({ iceServers: rtcConfig.iceServers, bundlePolicy: "max-bundle", iceCandidatePoolSize: 2 });
     const pc = this.pc;
+    this.tier = "good";
+    this.worse = 0;
+    this.better = 0;
+    this.net = null; // last measurement, shown in the connection tooltip
+    this.since = Date.now();
     state.local.getAudioTracks().forEach((t) => pc.addTrack(t, state.local));
     const v = currentVideoTrack();
     if (v) pc.addTrack(v, state.local);
+    preferRedundantAudio(pc);
     pc.ontrack = ({ track }) => {
       this.stream.addTrack(track);
       track.onunmute = () => renderTiles();
@@ -400,8 +430,9 @@ class Peer {
       const collision = description.type === "offer" && (this.makingOffer || pc.signalingState !== "stable");
       this.ignoreOffer = !this.polite && collision;
       if (this.ignoreOffer) return;
-      await pc.setRemoteDescription(description);
+      await pc.setRemoteDescription({ type: description.type, sdp: tuneOpus(description.sdp) });
       if (description.type === "offer") {
+        preferRedundantAudio(pc);
         await pc.setLocalDescription();
         signal(this.id, { description: pc.localDescription.toJSON() });
       }
@@ -410,26 +441,109 @@ class Peer {
     }
   }
 
-  /** Higher Opus bitrate for voice clarity; camera keeps its frame rate, screens keep their detail. */
+  /** Bitrates for this connection's tier: voice first; camera favours smooth motion, screens sharp text.
+   * In a group call every connection shares your upload, so each gets a fair slice. */
   async tune() {
     const q = QUALITY[prefs.get("quality") || "hd"] || QUALITY.hd;
+    const t = TIER[this.tier];
+    const fairShare = 1 / Math.sqrt(Math.max(1, state.peers.size));
     for (const sender of this.pc.getSenders()) {
       if (!sender.track) continue;
       try {
         const p = sender.getParameters();
         if (!p.encodings || !p.encodings.length) p.encodings = [{}];
+        const e = p.encodings[0];
         if (sender.track.kind === "audio") {
-          p.encodings[0].maxBitrate = AUDIO_BITRATE;
-          p.encodings[0].priority = "high";
-          p.encodings[0].networkPriority = "high";
+          e.maxBitrate = t.audio;
+          e.priority = "high";
+          e.networkPriority = "high";
         } else {
           const screen = state.screen && sender.track === state.screen.getVideoTracks()[0];
-          p.encodings[0].maxBitrate = screen ? 2_500_000 : q.bitrate;
-          p.degradationPreference = screen ? "maintain-resolution" : "balanced";
+          e.active = t.video || screen; // a shared screen is kept (slow but readable) even on a bad line
+          if (screen) {
+            e.maxBitrate = Math.round(2_500_000 * Math.max(t.share, 0.12) * fairShare);
+            e.maxFramerate = t.fps ? Math.min(t.fps, 10) : 15;
+            e.scaleResolutionDownBy = 1;
+            p.degradationPreference = "maintain-resolution";
+          } else {
+            e.maxBitrate = Math.max(120_000, Math.round(q.bitrate * t.share * fairShare));
+            e.scaleResolutionDownBy = t.scale;
+            if (t.fps) e.maxFramerate = t.fps; else delete e.maxFramerate;
+            p.degradationPreference = this.tier === "good" ? "balanced" : "maintain-framerate";
+          }
         }
         await sender.setParameters(p);
       } catch { /* not every browser lets us tune this */ }
     }
+  }
+
+  /** Measure this connection and move one tier down quickly, or up slowly once it has been steady. */
+  async measure() {
+    if (this.pc.connectionState !== "connected") return;
+    let report;
+    try { report = await this.pc.getStats(); } catch { return; }
+    let rtt = null;
+    let avail = null;
+    let loss = 0;
+    let bwLimited = false;
+    let cpuLimited = false;
+    let inLost = 0;
+    let inRecv = 0;
+    report.forEach((r) => {
+      if (r.type === "candidate-pair" && r.nominated && r.state === "succeeded") {
+        if (r.currentRoundTripTime != null) rtt = r.currentRoundTripTime;
+        if (r.availableOutgoingBitrate != null) avail = r.availableOutgoingBitrate;
+      } else if (r.type === "remote-inbound-rtp" && r.fractionLost != null) {
+        loss = Math.max(loss, r.fractionLost);
+        if (r.roundTripTime != null) rtt = Math.max(rtt ?? 0, r.roundTripTime);
+      } else if (r.type === "outbound-rtp" && r.kind === "video") {
+        bwLimited ||= r.qualityLimitationReason === "bandwidth";
+        cpuLimited ||= r.qualityLimitationReason === "cpu";
+      } else if (r.type === "inbound-rtp") {
+        inLost += r.packetsLost || 0;
+        inRecv += r.packetsReceived || 0;
+      }
+    });
+    // what reaches us from them (delta since last time)
+    const prev = this.inPrev || { lost: inLost, recv: inRecv };
+    const dl = inLost - prev.lost;
+    const dr = inRecv - prev.recv;
+    this.inPrev = { lost: inLost, recv: inRecv };
+    const inLoss = dl + dr > 0 ? Math.max(0, dl) / (dl + dr) : 0;
+    this.net = { rtt, avail, loss, inLoss };
+
+    // Bandwidth estimates start low and climb, so they only count after a few seconds, and only when
+    // the encoder itself says it is short of bandwidth.
+    const settled = Date.now() - this.since > 8000;
+    const bw = settled && bwLimited && avail != null ? avail : Infinity;
+    let target = "good";
+    if (loss > 0.2 || rtt > 1.2 || bw < 150_000) target = "bad";
+    else if (loss > 0.08 || rtt > 0.6 || bw < 450_000) target = "poor";
+    else if (loss > 0.03 || rtt > 0.3 || bw < 1_000_000 || cpuLimited) target = "fair";
+
+    const cur = TIERS.indexOf(this.tier);
+    const want = TIERS.indexOf(target);
+    if (want > cur) {
+      this.better = 0;
+      if (++this.worse >= (want - cur > 1 ? 1 : 2)) this.setTier(TIERS[want]);
+    } else if (want < cur) {
+      this.worse = 0;
+      if (++this.better >= 4) this.setTier(TIERS[cur - 1]); // up one step after ~8 s of steady improvement
+    } else {
+      this.worse = 0;
+      this.better = 0;
+    }
+  }
+
+  setTier(tier) {
+    if (tier === this.tier) return;
+    const was = this.tier;
+    this.tier = tier;
+    this.worse = 0;
+    this.better = 0;
+    this.tune();
+    signal(this.id, { net: tier }); // so they can show "weak connection" on your tile
+    onTierChange(this.id, was, tier);
   }
 
   async setVideo(track) {
@@ -456,9 +570,63 @@ class Peer {
 
   close() {
     clearTimeout(this.iceTimer);
+    this.closed = true;
     try { this.pc.close(); } catch { /* already closed */ }
     stopLevel(this.id);
   }
+}
+
+/** Put RED (redundant audio) first: each packet also carries the previous one, so a lost packet
+ * costs nothing audible. Browsers without RED simply ignore this. */
+function preferRedundantAudio(pc) {
+  const caps = window.RTCRtpReceiver?.getCapabilities?.("audio");
+  if (!caps) return;
+  const isRed = (c) => c.mimeType.toLowerCase() === "audio/red";
+  if (!caps.codecs.some(isRed)) return;
+  const order = [...caps.codecs.filter(isRed), ...caps.codecs.filter((c) => !isRed(c))];
+  for (const t of pc.getTransceivers()) {
+    if (t.receiver.track?.kind !== "audio" || !t.setCodecPreferences || t.stopped) continue;
+    try { t.setCodecPreferences(order); } catch { /* not this transceiver */ }
+  }
+}
+
+/** Ask for Opus with in-band FEC (rebuilds lost audio) and DTX (no data while you're silent). */
+function tuneOpus(sdp) {
+  if (!sdp) return sdp;
+  const pt = /a=rtpmap:(\d+) opus\/48000/i.exec(sdp)?.[1];
+  if (!pt) return sdp;
+  return sdp.replace(new RegExp(`a=fmtp:${pt} ([^\r\n]*)`), (line, params) => {
+    const kv = new Map(params.split(";").map((x) => x.trim()).filter(Boolean).map((x) => x.split("=")));
+    kv.set("useinbandfec", "1");
+    kv.set("usedtx", "1");
+    return `a=fmtp:${pt} ${[...kv].map(([k, v]) => `${k}=${v}`).join(";")}`;
+  });
+}
+
+function startNetworkWatch() {
+  clearInterval(state.netTimer);
+  state.netTimer = setInterval(() => {
+    if (!state) return;
+    state.peers.forEach((p) => p.measure());
+    if (!state.minimized) renderHead(); // refresh the signal bars / tooltip
+  }, STATS_EVERY_MS);
+}
+
+/** Worst sending tier over all your connections ("good" with nobody connected). */
+function myTier() {
+  let worst = 0;
+  for (const p of state.peers.values()) worst = Math.max(worst, TIERS.indexOf(p.tier));
+  return TIERS[worst];
+}
+
+function onTierChange(_id, was, tier) {
+  const before = state.netNotice;
+  const now = myTier();
+  state.netNotice = now;
+  if (now === before) return;
+  if (now === "bad" && state.cam) toast("Your connection is weak - video paused so your voice stays clear", "error");
+  else if (TIERS.indexOf(now) < TIERS.indexOf(before ?? "good") && now === "good" && was !== "good") toast("Connection is back - video restored");
+  renderTiles();
 }
 
 function currentVideoTrack() {
@@ -596,6 +764,7 @@ function cleanup() {
   sounds.stopRingback();
   clearTimeout(state.ringTimer);
   clearInterval(state.clock);
+  clearInterval(state.netTimer);
   state.peers.forEach((p) => p.close());
   state.local.getTracks().forEach((t) => t.stop());
   state.screen?.getTracks().forEach((t) => t.stop());
@@ -721,7 +890,8 @@ function renderHead() {
       h("strong", state.label),
       h("span.call-status", status),
       n > 1 ? h("span.call-people", icon("users", { size: 13 }), String(n)) : null,
-      quality ? h(`span.call-net.${quality}`, { title: `Connection: ${quality}` }, h("i"), h("i"), h("i")) : null),
+      quality ? h(`span.call-net.${quality}`, { title: connectionDetail() }, h("i"), h("i"), h("i")) : null,
+      state.cam && myTier() === "bad" ? h("span.call-net-note", "Video paused - weak connection") : null),
     h("div.call-head-actions",
       state.minimized
         ? h("button.icon-btn", { type: "button", title: "Expand", "aria-label": "Expand call", onclick: expand }, icon("maximize", { size: 16 }))
@@ -733,7 +903,20 @@ function connectionQuality() {
   const states = [...state.peers.values()].map((p) => p.pc.connectionState);
   if (states.some((s) => s === "failed" || s === "disconnected")) return "poor";
   if (states.some((s) => s === "connecting" || s === "new")) return "fair";
-  return "good";
+  // worst of what you send and what they report sending to you
+  let worst = TIERS.indexOf(myTier());
+  for (const id of state.peers.keys()) worst = Math.max(worst, TIERS.indexOf(state.remoteNet.get(id) || "good"));
+  return ["good", "fair", "poor", "poor"][worst];
+}
+
+function connectionDetail() {
+  const nets = [...state.peers.values()].map((p) => p.net).filter(Boolean);
+  if (!nets.length) return "Connection: measuring…";
+  const rtt = Math.max(...nets.map((n) => n.rtt || 0));
+  const loss = Math.max(...nets.map((n) => Math.max(n.loss, n.inLoss)));
+  const tier = myTier();
+  const what = { good: "Good", fair: "OK - video slightly reduced", poor: "Weak - video reduced to keep it smooth", bad: "Very weak - video paused, voice protected" }[tier];
+  return `Connection: ${what}\nDelay ${Math.round(rtt * 1000)} ms · packet loss ${(loss * 100).toFixed(1)}%`;
 }
 
 function ctl(ic, label, run, { on = true, danger = false, cls = "" } = {}) {
@@ -793,6 +976,8 @@ function tileFor(id, stream, { local = false } = {}) {
   h("div.call-tile-name", rs.mic === false ? icon("mic-off", { size: 13, cls: "muted-ic" }) : null,
     h("span", local ? `${u.name} (you)` : u.name), rs.screen ? h("span.tile-tag", "Screen") : null),
   rs.hand ? h("div.call-hand", { title: "Hand raised" }, "✋") : null,
+  !local && ["poor", "bad"].includes(state.remoteNet.get(id)) ? h("div.call-tile-weak", { title: `${u.name}'s connection is weak` },
+    h("span.call-net.poor", h("i"), h("i"), h("i")), state.remoteNet.get(id) === "bad" && rs.cam !== false ? "Video paused · weak connection" : "Weak connection") : null,
   !local && conn && conn !== "connected" ? h("div.call-tile-state", conn === "failed" ? "Reconnecting…" : "Connecting…") : null);
   if (!showVideo) video.classList.add("hidden-video"); else video.classList.remove("hidden-video");
   return tile;
@@ -975,7 +1160,7 @@ async function settingsMenu(anchor) {
         Object.entries(QUALITY).map(([k, q]) => h("option", { value: k, selected: (prefs.get("quality") || "hd") === k }, q.label)))),
     h("label.call-set-check", h("input", { type: "checkbox", checked: prefs.get("noiseSuppression") !== false, onchange: (e) => applyAudioProcessing(e.target.checked) }),
       h("span", h("strong", "Noise suppression"), h("span.muted.small", "Removes keyboard and background noise. Turn off for music."))),
-    h("p.muted.small.call-set-tip", "Tip: use headphones for the clearest sound, and a wired connection for the steadiest video."));
+    h("p.muted.small.call-set-tip", "Video adjusts to your connection by itself: on a weak line it gets softer, then pauses so your voice stays clear. Tip: headphones give the clearest sound."));
   state.ui.root.append(panel);
   const r = anchor.getBoundingClientRect();
   const root = state.ui.root.getBoundingClientRect();

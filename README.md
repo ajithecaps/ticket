@@ -485,6 +485,10 @@ hosts) stay in sync through the database alone, without Redis. If you put a prox
 pass WebSocket upgrades for `/api/v1/chat/ws` (nginx: `proxy_set_header Upgrade $http_upgrade;
 proxy_set_header Connection "upgrade";`).
 
+
+**Weak connections.** Calls measure each connection every 2 seconds (packet loss, delay, bandwidth). Video then steps down smoothly: lower resolution and frame rate first, then lower bitrate. On a very bad line it pauses so the voice stays clear, and it comes back by itself once the line recovers. Both sides see a "weak connection" indicator. Voice carries redundant packets (RED), plus Opus FEC, and sends nothing during silence (DTX). In group calls your upload is shared fairly between everyone. For people behind strict office or mobile networks, add a TURN server that also listens on TCP/TLS port 443, for example `CHAT_TURN_URL=turn:turn.example.com:3478,turns:turn.example.com:443?transport=tcp`.
+
+**Ringtones.** Chat settings › Call ringtone offers Aurora (default), Sunrise, Breeze, Classic phone, or Silent, each with a preview. They are synthesised in the browser (no audio files) and start softly, growing a little louder until you answer.
 ## Desktop app
 
 People can install Tickets as a desktop app for **macOS, Windows and Linux**. After signing in on the web, they open
