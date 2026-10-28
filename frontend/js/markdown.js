@@ -11,7 +11,7 @@ const VENDOR = "/static/vendor";
 
 // ----------------------------------------------------------------------------- lazy loading
 const loaded = new Map();
-function loadScript(file) {
+export function loadScript(file) {
   if (!loaded.has(file)) {
     loaded.set(file, new Promise((resolve, reject) => {
       const s = document.createElement("script");

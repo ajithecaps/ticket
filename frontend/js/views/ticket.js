@@ -1,4 +1,5 @@
 import { api, auth } from "../api.js";
+import { fileCard, files as previewFiles } from "../preview.js";
 import { icon } from "../icons.js";
 import { navigate } from "../app.js";
 import { confirmIfOverlapping, fetchOverlaps, overlapCount } from "../overlaps.js";
@@ -361,7 +362,7 @@ async function comments(el, t, onChange) {
           mine && h("button.link.small", { onclick: () => editComment(c, body) }, "Edit"),
           (mine || canModerate) && h("button.link.small.danger-text", { onclick: () => deleteComment(c) }, "Delete")),
         body,
-        c.attachments.length > 0 && h("div.files.inline", c.attachments.map((a) => fileChip(a)))));
+        c.attachments.length > 0 && attachmentCards(c.attachments)));
   };
 
   function editComment(c, bodyEl) {
@@ -521,11 +522,12 @@ function mentionComposer(t, initial, onSubmit, { withFiles = false, submitLabel 
 }
 
 // ----------------------------------------------------------------------------- files
-function fileChip(a, onDelete) {
-  return h("div.file",
-    h("button.link", { onclick: () => api.download(a).catch((err) => toast(err.message, "error")), title: "Download" }, icon("file", { size: 14 }), ` ${a.filename}`),
-    h("span.muted.small", `${fmtBytes(a.size)} · ${a.uploader.name} · ${timeAgo(a.created_at)}`),
-    onDelete && h("button.icon-btn.small", { "aria-label": `Delete ${a.filename}`, onclick: () => onDelete(a) }, icon("x", { size: 14 })));
+/** Attachments as preview cards: click to preview (images, PDF, Office, code …), arrows to browse. */
+function attachmentCards(list, canDelete, onDelete) {
+  const sources = list.map((a) => previewFiles.attachment(a, `${a.uploader.name} · ${timeAgo(a.created_at)}`));
+  return h("div.pv-grid", list.map((a, i) => fileCard(sources, i, {
+    actions: canDelete?.(a) ? h("button.icon-btn.sm", { type: "button", title: "Delete", "aria-label": `Delete ${a.filename}`, onclick: () => onDelete(a) }, icon("trash", { size: 15 })) : null,
+  })));
 }
 
 async function files(el, t, onChange) {
@@ -559,7 +561,7 @@ async function files(el, t, onChange) {
 
   clear(el, drop, input,
     list.length
-      ? h("div.files", list.map((a) => fileChip(a, a.uploader.id === auth.user.id || t.can_delete ? remove : null)))
+      ? attachmentCards(list, (a) => a.uploader.id === auth.user.id || t.can_delete, remove)
       : h("p.muted.pad", "No files attached."));
 }
 

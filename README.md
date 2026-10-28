@@ -441,6 +441,20 @@ picks it); if you run the API on several hosts, set `SCHEDULER_ENABLED=false` on
   incoming calls and a ringback while you're calling. All of them can be switched off per person from
   the ⚙ menu in the chat sidebar (along with the animations).
 
+**My space** (top of the chat sidebar) is just for you:
+
+- **Notes to self** - a private conversation with only you in it. Jot notes, paste links, drop
+  documents, pin what matters; its **Links**, **Files** and **Pinned** panels (top right) list them.
+- **Saved items** - press the bookmark on any message in any conversation (or ⋯ › *Save for later*).
+  Saved items can be filtered to links or files and searched; each opens back in its conversation.
+- Every conversation also has a **Links** panel listing every link shared in it.
+
+**File preview** - attachments on tickets, documents on upcoming tasks and files in chat open in a
+previewer: images (zoom), PDF, video and audio, Word (.docx), Excel/ODS/CSV (with sheet tabs),
+Markdown and code or text files with highlighting, line numbers and Copy. ← → move between the
+files, Esc closes. Other types show a download card. Files are fetched with the viewer's own login;
+HTML and SVG are never opened as pages.
+
 **Audio and video calls** - the 📞 / 🎥 buttons in any conversation ring the other person (DM) or
 everyone in the channel (group call, up to `CHAT_MAX_CALL_PEOPLE` = 8). People answer with audio or
 video, or join later from the call card in the conversation. **Add people** in the call window rings

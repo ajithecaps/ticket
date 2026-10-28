@@ -7,6 +7,7 @@ import { realtime } from "../realtime.js";
 import { EMOJI, QUICK_REACTIONS, recentEmoji, rememberEmoji, searchEmoji } from "../emoji.js";
 import { activeCalls, callsSupported, currentCall, fmtDuration, initCalls, join as joinCall, onCallsChange, startCall, stopCalls } from "../calls.js";
 import { prefs, sounds } from "../sounds.js";
+import { fileCard as previewCard, files as previewFiles, openPreview } from "../preview.js";
 import {
   avatar, busy, clear, confirmDialog, copyText, emptyState, errorBox, field, fmtBytes, h, modal, parseDate,
   renderMarkdown, spinner, timeAgo, toast,
@@ -26,6 +27,7 @@ const shared = {
   online: new Set(),
   usersLoaded: null,
   viewing: null, // channel id currently open in the chat view (and visible)
+  saved: new Set(), // message ids I bookmarked
   unsub: null,
 };
 
@@ -126,6 +128,7 @@ export function startChat() {
   initCalls(() => shared.users);
   loadUsers(true).catch(() => {});
   refreshBadge();
+  api.get("/chat/saved/ids").then((ids) => { shared.saved = new Set(ids); }).catch(() => {});
   shared.unsub = realtime.on((ev) => {
     switch (ev.type) {
       case "_open":
@@ -143,6 +146,9 @@ export function startChat() {
       case "read":
       case "channels":
         refreshBadgeSoon();
+        break;
+      case "saved":
+        if (ev.saved) shared.saved.add(ev.message_id); else shared.saved.delete(ev.message_id);
         break;
       case "presence":
         if (ev.online) shared.online.add(ev.user_id); else shared.online.delete(ev.user_id);
@@ -184,7 +190,11 @@ function channelIcon(c, size = 16) {
   return icon(c.is_private ? "lock" : "hash", { size });
 }
 
+/** Your own space: a direct message with nobody else in it. */
+const isSelf = (c) => c?.kind === "dm" && (c.members || []).length === 1 && c.members[0].id === me()?.id;
+
 function channelTitle(c) {
+  if (isSelf(c)) return "Notes to self";
   return c.kind === "channel" ? c.name : c.display_name;
 }
 
@@ -218,24 +228,20 @@ function fileUrl(id, inline) {
   return blobCache.get(key);
 }
 
-async function downloadFile(f) {
-  try {
-    const url = await fileUrl(f.id, false);
-    const a = h("a", { href: url, download: f.filename });
-    document.body.append(a);
-    a.click();
-    a.remove();
-  } catch (err) { toast(err.message, "error"); }
+/** Preview chat files (images, PDF, Office, code …) with ← → between them. */
+function previewChatFiles(list, index, meta) {
+  openPreview(list.map((f) => previewFiles.chat(f, f.user?.name || meta)), index);
 }
 
-function lightbox(f) {
-  const img = h("img.lightbox-img", { alt: f.filename });
-  fileUrl(f.id, true).then((u) => { img.src = u; }).catch(() => {});
-  const m = modal(f.filename, h("div.lightbox",
-    img,
-    h("div.lightbox-bar", h("span.muted.small", fmtBytes(f.size)),
-      h("button.btn.sm", { onclick: () => downloadFile(f) }, icon("download", { size: 14 }), "Download"))), { wide: true });
-  m.dialog.classList.add("lightbox-modal");
+function linkRow(l, extra) {
+  let host = "";
+  try { host = new URL(l.url).hostname.replace(/^www\./, ""); } catch { /* keep empty */ }
+  return h("div.link-row",
+    h("span.link-ic", icon("link", { size: 15 })),
+    h("a.link-main", { href: l.url, target: "_blank", rel: "noopener noreferrer", title: l.url },
+      h("span.link-title", l.text || l.url.replace(/^https?:\/\/(www\.)?/, "")), h("span.link-host", host)),
+    h("button.icon-btn.sm", { type: "button", title: "Copy link", "aria-label": "Copy link", onclick: () => copyText(l.url, "Link copied") }, icon("copy", { size: 14 })),
+    extra);
 }
 
 /** Markdown + "@email" → name pills, "@channel" → broadcast pill. */
@@ -796,7 +802,7 @@ class ChatView {
   }
 
   sorted(kind) {
-    const list = this.channels.filter((c) => (kind === "channel" ? c.kind === "channel" : c.kind === kind) && !c.archived);
+    const list = this.channels.filter((c) => (kind === "channel" ? c.kind === "channel" : c.kind === kind) && !c.archived && !isSelf(c));
     if (kind === "dm") return list.sort((a, b) => (parseDate(b.last_message_at) || 0) - (parseDate(a.last_message_at) || 0));
     return list.sort((a, b) => channelTitle(a).localeCompare(channelTitle(b)));
   }
@@ -849,6 +855,7 @@ class ChatView {
           h("button.icon-btn", { type: "button", title: "New message", "aria-label": "New message", onclick: () => this.newDm() }, icon("compose", { size: 17 })))),
       h("div.chat-side-filter", icon("search", { size: 14 }), filterInput),
       h("nav.chat-side-scroll", { "aria-label": "Conversations" },
+        this.mySpace(f),
         section("project", "Projects", this.sorted("project"), "Browse project channels", me().role === "admin" ? () => this.browse() : null),
         section("channel", "Channels", this.sorted("channel"), isAdmin() ? "Add a channel" : "Browse channels", (e) => (isAdmin() ? this.channelMenu(e.currentTarget) : this.browse())),
         section("dm", "Direct messages", this.sorted("dm"), "New message", () => this.newDm()),
@@ -879,6 +886,24 @@ class ChatView {
         },
       } : null,
     ]);
+  }
+
+  mySpace(f) {
+    const self = this.channels.find(isSelf);
+    if (f && !"notes to self saved items links".includes(f.toLowerCase())) return null;
+    const savedOpen = this.panel?.kind === "saved";
+    return h("div.chat-sec.my-space",
+      h("div.chat-sec-head", h("span.chat-sec-toggle.static", "My space")),
+      h("div.chat-sec-list",
+        h(`a.chat-item.space-item${self && this.current?.id === self.id ? ".active" : ""}`, {
+          href: self ? `#/chat/${self.id}` : "#/chat", title: "Notes, links and files only you can see",
+          onclick: (e) => { e.preventDefault(); this.openSelf(); },
+        }, h("span.chat-item-ic.space-ic.notes", icon("edit", { size: 14 })), h("span.chat-item-name", "Notes to self")),
+        h(`a.chat-item.space-item${savedOpen ? ".active" : ""}`, {
+          href: "#/chat", title: "Messages, files and links you saved",
+          onclick: (e) => { e.preventDefault(); this.openPanel({ kind: "saved", filter: "all" }); this.renderSide(); },
+        }, h("span.chat-item-ic.space-ic.saved", icon("bookmark", { size: 14 })), h("span.chat-item-name", "Saved items"),
+        shared.saved.size ? h("span.space-count", String(shared.saved.size)) : null)));
   }
 
   toggleSection(key) {
@@ -978,7 +1003,7 @@ class ChatView {
     } else {
       this.composer = composer({
         channelId: ch.id,
-        placeholder: ch.kind === "dm" ? `Message ${ch.display_name}` : `Message ${ch.kind === "project" ? ch.display_name : "#" + ch.name}`,
+        placeholder: isSelf(ch) ? "Jot a note, paste a link or drop a file…" : ch.kind === "dm" ? `Message ${ch.display_name}` : `Message ${ch.kind === "project" ? ch.display_name : "#" + ch.name}`,
         candidates: () => this.candidates(),
         onSend: (body, files) => this.send(body, files, null),
         onEditLast: () => this.editLast(),
@@ -1019,7 +1044,9 @@ class ChatView {
       ch.kind === "dm" ? dmAvatar(ch) : h("span.chat-title-ic", channelIcon(ch, 18)),
       h("span.chat-title-text", channelTitle(ch)),
       icon("chevron-down", { size: 14 }));
-    const sub = ch.kind === "dm"
+    const sub = isSelf(ch)
+      ? h("span.chat-sub", icon("lock", { size: 11 }), " Only you can see this")
+      : ch.kind === "dm"
       ? (partner ? h("span.chat-sub", shared.online.has(partner.id) ? h("span.pres-word.on", "Online") : h("span.pres-word", "Away"),
         partner.designation || userById(partner.id)?.designation ? ` · ${partner.designation || userById(partner.id)?.designation}` : "") : h("span.chat-sub", `${(ch.members || []).length} people`))
       : h("button.chat-topic", { type: "button", title: ch.topic ? "Edit topic" : "Add a topic", onclick: () => this.editTopic(), disabled: !ch.can_post }, ch.topic || (ch.can_post ? "Add a topic" : ""));
@@ -1028,7 +1055,7 @@ class ChatView {
     const mine = currentCall()?.channel_id === ch.id;
     const label = ch.kind === "dm" ? ch.display_name : channelTitle(ch);
     const isDm = ch.kind === "dm" && (ch.members || []).length <= 2;
-    const callButtons = !ch.can_post ? null : live
+    const callButtons = !ch.can_post || isSelf(ch) ? null : live
       ? h(`button.btn.sm.call-join${mine ? ".in" : ""}`, {
         type: "button", onclick: () => joinCall(live.id, { video: false, label, channelId: ch.id }),
         title: mine ? "Show the call" : "Join the call",
@@ -1047,6 +1074,7 @@ class ChatView {
         callButtons ? h("span.head-sep") : null,
         action("pin", "Pinned messages", () => this.openPanel({ kind: "pins" }), pinned ? h("span.head-count", String(pinned)) : null),
         action("paperclip", "Files", () => this.openPanel({ kind: "files" })),
+        action("link", "Links", () => this.openPanel({ kind: "links" })),
         action("search", "Search this conversation", () => this.openPanel({ kind: "search", channel: ch.id })),
         action(ch.muted ? "bell-off" : "bell", ch.muted ? "Unmute" : "Mute", () => this.toggleMute()),
         h("button.icon-btn", { type: "button", title: "More", "aria-label": "More", onclick: (e) => this.moreMenu(e.currentTarget) }, icon("more", { size: 17 }))));
@@ -1180,8 +1208,10 @@ class ChatView {
     let title;
     let text;
     if (ch.kind === "dm") {
-      title = partner?.id === me().id ? "This is your space" : ch.display_name;
-      text = partner?.id === me().id ? "Draft messages, keep links and notes to yourself." : `This is the very beginning of your conversation with ${ch.display_name}.`;
+      title = isSelf(ch) ? "Notes to self" : ch.display_name;
+      text = isSelf(ch)
+        ? "Only you can see this. Jot notes, paste links, drop documents and pin what matters - Links, Files and Pinned (top right) keep them one click away."
+        : `This is the very beginning of your conversation with ${ch.display_name}.`;
     } else if (ch.kind === "project") {
       title = `Welcome to ${ch.display_name}`;
       text = "Everyone in the project is here. Talk tickets (PAY-12 links itself), share files and keep decisions in one place.";
@@ -1251,7 +1281,8 @@ class ChatView {
           h("strong.msg-author", m.user?.name || "Deleted user"),
           m.user && userById(m.user.id)?.role === "admin" ? h("span.msg-tag", "Admin") : null,
           time,
-          m.pinned ? h("span.msg-pin", icon("pin", { size: 12 }), "Pinned") : null),
+          m.pinned ? h("span.msg-pin", icon("pin", { size: 12 }), "Pinned") : null,
+          shared.saved.has(m.id) ? h("span.msg-saved", { title: "In your saved items" }, icon("bookmark", { size: 12 }), "Saved") : null),
         grouped && m.pinned ? h("span.msg-pin", icon("pin", { size: 12 }), "Pinned") : null,
         h("div.msg-body", body, m.edited_at && !m.deleted ? h("span.msg-edited", { title: `Edited ${fullFmt.format(parseDate(m.edited_at))}` }, "(edited)") : null),
         this.renderFiles(m),
@@ -1284,26 +1315,24 @@ class ChatView {
     if (!m.files?.length) return null;
     const images = m.files.filter((f) => f.is_image);
     const others = m.files.filter((f) => !f.is_image);
+    const open = (f) => previewChatFiles(m.files, m.files.indexOf(f), m.user?.name);
     return h("div.msg-files",
       images.length ? h(`div.msg-images${images.length > 1 ? ".multi" : ""}`, images.map((f) => {
         const img = h("img", { alt: f.filename, loading: "lazy" });
-        const btn = h("button.msg-image", { type: "button", title: f.filename, onclick: () => lightbox(f) }, img);
+        const btn = h("button.msg-image", { type: "button", title: `Preview ${f.filename}`, onclick: () => open(f) }, img);
         fileUrl(f.id, true).then((u) => {
           const stick = this.atBottom(120);
           img.src = u;
           img.onload = () => { if (stick) this.scrollToBottom(); };
-        }).catch(() => btn.replaceWith(this.fileCard(f)));
+        }).catch(() => btn.replaceWith(this.fileCard(f, m.files, m.files.indexOf(f))));
         return btn;
       })) : null,
-      others.map((f) => this.fileCard(f)));
+      others.length ? h("div.msg-docs", others.map((f) => this.fileCard(f, m.files, m.files.indexOf(f), m.user?.name))) : null);
   }
 
-  fileCard(f) {
-    const ext = (f.filename.split(".").pop() || "").slice(0, 4).toUpperCase();
-    return h("div.msg-file",
-      h("span.msg-file-ic", { dataset: { ext } }, icon("file", { size: 20 }), h("span", ext)),
-      h("span.msg-file-meta", h("span.msg-file-name", f.filename), h("span.muted.small", fmtBytes(f.size))),
-      h("button.icon-btn", { type: "button", title: "Download", "aria-label": `Download ${f.filename}`, onclick: () => downloadFile(f) }, icon("download", { size: 16 })));
+  /** A previewable file card; `list` lets ← → move between the files around it. */
+  fileCard(f, list = [f], index = 0, meta) {
+    return previewCard(list.map((x) => previewFiles.chat(x, x.user?.name || meta)), index);
   }
 
   renderReactions(m) {
@@ -1335,12 +1364,17 @@ class ChatView {
       canPost ? QUICK_REACTIONS.slice(0, 3).map((e) => h("button.ma.ma-emoji", { type: "button", title: `React ${e}`, onclick: () => this.react(m, e) }, e)) : null,
       canPost ? h("button.ma", { type: "button", title: "Add reaction", "aria-label": "Add reaction", onclick: (e) => emojiPicker(e.currentTarget, (em) => this.react(m, em)) }, icon("smile", { size: 16 })) : null,
       !inThread && canPost ? h("button.ma", { type: "button", title: "Reply in thread", "aria-label": "Reply in thread", onclick: () => this.openThread(m.id) }, icon("message", { size: 16 })) : null,
+      h(`button.ma${shared.saved.has(m.id) ? ".on" : ""}`, {
+        type: "button", title: shared.saved.has(m.id) ? "Remove from saved" : "Save for later", "aria-label": "Save for later",
+        onclick: () => this.toggleSave(m),
+      }, icon("bookmark", { size: 16 })),
       h("button.ma", {
         type: "button", title: "More actions", "aria-label": "More actions",
         onclick: (e) => menu(e.currentTarget, [
           isMe && canPost && !m.call ? { icon: "edit", label: "Edit message", run: () => this.startEdit(m) } : null,
           !inThread && canPost ? { icon: "message", label: "Reply in thread", run: () => this.openThread(m.id) } : null,
           canPost ? { icon: "pin", label: m.pinned ? "Unpin" : "Pin to conversation", run: () => this.pin(m) } : null,
+          { icon: "bookmark", label: shared.saved.has(m.id) ? "Remove from saved" : "Save for later", run: () => this.toggleSave(m) },
           !inThread && !isMe ? { icon: "eye-off", label: "Mark unread from here", run: () => this.markUnread(m) } : null,
           { icon: "link", label: "Copy link", run: () => copyText(`${location.origin}${location.pathname}#/chat/${m.channel_id}?m=${m.parent_id || m.id}`, "Link copied") },
           m.body ? { icon: "copy", label: "Copy text", run: () => copyText(m.body, "Text copied") } : null,
@@ -1596,6 +1630,25 @@ class ChatView {
         const chip = [...scope.querySelectorAll(".reaction")].find((b) => b.querySelector(".reaction-e")?.textContent === emoji);
         reactionPop(chip, emoji);
       }
+    } catch (err) { toast(err.message, "error"); }
+  }
+
+  async toggleSave(m) {
+    try {
+      const r = await api.post(`/chat/messages/${m.id}/save`);
+      if (r.saved) shared.saved.add(m.id); else shared.saved.delete(m.id);
+      this.onUpdate(this.messages.find((x) => x.id === m.id) || m);
+      this.renderSide();
+      toast(r.saved ? "Saved - find it under My space › Saved items" : "Removed from saved");
+      if (this.panel?.kind === "saved") this.renderPanel();
+    } catch (err) { toast(err.message, "error"); }
+  }
+
+  async openSelf() {
+    try {
+      const ch = await api.post("/chat/self");
+      if (!this.channels.some((c) => c.id === ch.id)) this.channels.push(ch);
+      await this.open(ch.id);
     } catch (err) { toast(err.message, "error"); }
   }
 
@@ -1929,12 +1982,49 @@ class ChatView {
           images.length ? h("div.panel-gallery", images.map((f) => {
             const img = h("img", { alt: f.filename });
             fileUrl(f.id, true).then((u) => { img.src = u; }).catch(() => {});
-            return h("button.gallery-cell", { type: "button", title: f.filename, onclick: () => lightbox(f) }, img);
+            return h("button.gallery-cell", { type: "button", title: f.filename, onclick: () => previewChatFiles(images, images.indexOf(f)) }, img);
           })) : null,
-          docs.map((f) => h("div.panel-file", this.fileCard(f), h("span.muted.small", `${f.user?.name || "Someone"} · ${timeAgo(f.created_at)}`),
+          docs.map((f) => h("div.panel-file", this.fileCard(f, docs, docs.indexOf(f)), h("span.muted.small", `${f.user?.name || "Someone"} · ${timeAgo(f.created_at)}`),
             h("button.link.small", { type: "button", onclick: () => this.goTo(ch.id, f.message_id) }, "Show in chat"))),
         ] : emptyState("No files yet", "Drag files into the conversation or paste a screenshot.", null, "paperclip"));
       } catch (err) { clear(this.panelEl.querySelector(".panel-body"), errorBox(err)); }
+    } else if (p.kind === "links") {
+      this.panelShell("Links", channelTitle(ch), spinner(3));
+      try {
+        const links = await api.get(`/chat/channels/${ch.id}/links`);
+        if (this.panel !== p) return;
+        const filter = h("input.panel-search", { type: "search", placeholder: "Filter links", "aria-label": "Filter links" });
+        const listEl = h("div.link-list");
+        const paint = () => {
+          const q = filter.value.trim().toLowerCase();
+          const shown = links.filter((l) => !q || l.url.toLowerCase().includes(q) || (l.text || "").toLowerCase().includes(q));
+          clear(listEl, shown.map((l) => h("div.link-item", linkRow(l, h("button.icon-btn.sm", { type: "button", title: "Show in chat", "aria-label": "Show in chat", onclick: () => this.goTo(ch.id, l.parent_id || l.message_id) }, icon("message", { size: 14 }))),
+            h("span.muted.small.link-by", `${l.user?.name || "Someone"} · ${timeAgo(l.created_at)}${l.pinned ? " · 📌 pinned" : ""}`))),
+          !shown.length ? h("p.muted.small", "No matching links.") : null);
+        };
+        filter.addEventListener("input", paint);
+        clear(this.panelEl.querySelector(".panel-body"), links.length ? [filter, listEl]
+          : emptyState("No links yet", isSelf(ch) ? "Paste a link here to keep it - it shows up in this list." : "Links shared in this conversation collect here.", null, "link"));
+        if (links.length) paint();
+      } catch (err) { clear(this.panelEl.querySelector(".panel-body"), errorBox(err)); }
+    } else if (p.kind === "saved") {
+      const chips = h("div.chips.seg", [["all", "All"], ["links", "Links"], ["files", "Files"]].map(([k, t]) =>
+        h("button.chip", { type: "button", "aria-pressed": String(p.filter === k), onclick: () => { this.panel = { ...p, filter: k }; this.renderPanel(); } }, t)));
+      const search = h("input.panel-search", { type: "search", placeholder: "Search saved items", value: p.q || "", "aria-label": "Search saved items" });
+      const listEl = h("div.saved-list", spinner(3));
+      this.panelShell("Saved items", "Only you can see these", chips, search, listEl);
+      const load = async () => {
+        try {
+          const items = await api.get("/chat/saved", { kind: p.filter || "all", q: search.value.trim() || undefined });
+          if (this.panel !== p) return;
+          clear(listEl, items.length ? items.map((m) => this.savedCard(m))
+            : emptyState(search.value.trim() ? "Nothing matches" : "Nothing saved yet",
+              search.value.trim() ? "Try other words." : "Hover any message and press the bookmark, or use ⋯ › Save for later. Files and links you save land here too.", null, "bookmark"));
+        } catch (err) { clear(listEl, errorBox(err)); }
+      };
+      let timer;
+      search.addEventListener("input", () => { p.q = search.value; clearTimeout(timer); timer = setTimeout(load, 250); });
+      load();
     } else if (p.kind === "search") {
       const input = h("input.panel-search", { type: "search", placeholder: p.channel ? `Search in ${channelTitle(ch)}` : "Search all messages", value: p.q || "", "aria-label": "Search messages" });
       const results = h("div.search-results", p.q ? spinner(3) : h("p.muted.small.search-hint", "Search words across messages. Results only include conversations you can read."));
@@ -1971,11 +2061,27 @@ class ChatView {
           h("button.btn.sm", { type: "button", onclick: () => this.openPanel({ kind: "members" }) }, icon("users", { size: 14 }), "Members"),
           h("button.btn.sm", { type: "button", onclick: () => this.openPanel({ kind: "pins" }) }, icon("pin", { size: 14 }), "Pinned"),
           h("button.btn.sm", { type: "button", onclick: () => this.openPanel({ kind: "files" }) }, icon("paperclip", { size: 14 }), "Files"),
+          h("button.btn.sm", { type: "button", onclick: () => this.openPanel({ kind: "links" }) }, icon("link", { size: 14 }), "Links"),
           h("button.btn.sm", { type: "button", onclick: () => this.toggleMute() }, icon(ch.muted ? "bell" : "bell-off", { size: 14 }), ch.muted ? "Unmute" : "Mute"),
           ch.kind === "project" ? h("a.btn.sm", { href: `#/projects/${ch.project_id}` }, icon("folder", { size: 14 }), "Open project") : null));
     } else if (p.kind === "thread") {
       await this.renderThreadPanel();
     }
+  }
+
+  savedCard(m) {
+    const where = m.channel.kind === "channel" ? `#${m.channel.display_name}` : (m.channel.kind === "dm" && m.channel.display_name.endsWith("(you)") ? "Notes to self" : m.channel.display_name);
+    const body = m.body ? renderBody(m.body) : null;
+    const filesList = m.files?.length ? h("div.saved-files", m.files.map((f, i) => this.fileCard(f, m.files, i, m.user?.name))) : null;
+    const links = m.links?.length ? h("div.saved-links", m.links.slice(0, 5).map((l) => linkRow(l))) : null;
+    return h("div.saved-card",
+      h("div.result-head", avatar(m.user, "sm"), h("strong", m.user?.name || "Someone"), h("span.muted.small", `in ${where}`),
+        h("span.muted.small.result-time", { title: `Saved ${timeAgo(m.saved_at)}` }, timeAgo(m.created_at))),
+      body ? h("div.result-body", body) : null,
+      filesList, links,
+      h("div.saved-actions",
+        h("button.btn.sm", { type: "button", onclick: () => this.goTo(m.channel_id, m.parent_id || m.id) }, icon("message", { size: 14 }), "Open in chat"),
+        h("button.btn.ghost.sm", { type: "button", onclick: () => this.toggleSave(m) }, icon("bookmark", { size: 14 }), "Remove")));
   }
 
   resultCard(m, q) {

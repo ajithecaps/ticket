@@ -1469,3 +1469,34 @@ def test_add_people_to_running_call(client, admin, world):
     for who in (asha, zed):
         client.post(f"{C}/calls/{call['id']}/leave", headers=who["headers"])
     assert client.post(f"{C}/calls/{call['id']}/invite", headers=asha["headers"], json={"user_ids": [ravi["id"]]}).status_code == 410
+
+
+def test_chat_personal_space(client, admin, world):
+    asha, kiran, zed, pay = world["asha"], world["kiran"], world["zed"], world["pay"]
+    C = f"{API}/chat"
+    # notes to self: created once, private, reused
+    me1 = client.post(f"{C}/self", headers=asha["headers"]).json()
+    me2 = client.post(f"{C}/self", headers=asha["headers"]).json()
+    assert me1["id"] == me2["id"] and me1["kind"] == "dm" and [u["id"] for u in me1["members"]] == [asha["id"]]
+    assert client.get(f"{C}/channels/{me1['id']}/messages", headers=kiran["headers"]).status_code == 404
+    note = client.post(f"{C}/channels/{me1['id']}/messages", headers=asha["headers"],
+                       data={"body": "Spec: [API design](https://docs.example.com/api) and https://github.com/acme/app/pull/7. `https://not-a-link.io`"},
+                       files={"files": ("plan.txt", b"todo", "text/plain")}).json()
+    links = client.get(f"{C}/channels/{me1['id']}/links", headers=asha["headers"]).json()
+    assert [(l["url"], l["text"]) for l in links] == [("https://docs.example.com/api", "API design"), ("https://github.com/acme/app/pull/7", None)]
+
+    # save messages from anywhere; saved list filters by links / files; only your own
+    pay_ch = next(c for c in client.get(f"{C}/channels", headers=kiran["headers"]).json() if c["project_id"] == pay["id"])
+    other = client.post(f"{C}/channels/{pay_ch['id']}/messages", headers=kiran["headers"], data={"body": "Release checklist is ready"}).json()
+    for mid in (note["id"], other["id"]):
+        assert client.post(f"{C}/messages/{mid}/save", headers=asha["headers"]).json()["saved"] is True
+    assert set(client.get(f"{C}/saved/ids", headers=asha["headers"]).json()) == {note["id"], other["id"]}
+    assert client.get(f"{C}/saved/ids", headers=kiran["headers"]).json() == []
+    allsaved = client.get(f"{C}/saved", headers=asha["headers"]).json()
+    assert [m["id"] for m in allsaved] == [other["id"], note["id"]] and allsaved[1]["links"][0]["text"] == "API design"
+    assert [m["id"] for m in client.get(f"{C}/saved", headers=asha["headers"], params={"kind": "files"}).json()] == [note["id"]]
+    assert [m["id"] for m in client.get(f"{C}/saved", headers=asha["headers"], params={"kind": "links"}).json()] == [note["id"]]
+    assert [m["id"] for m in client.get(f"{C}/saved", headers=asha["headers"], params={"q": "checklist"}).json()] == [other["id"]]
+    # can't save what you can't read; unsaving toggles
+    assert client.post(f"{C}/messages/{note['id']}/save", headers=zed["headers"]).status_code == 404
+    assert client.post(f"{C}/messages/{other['id']}/save", headers=asha["headers"]).json()["saved"] is False

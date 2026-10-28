@@ -1,5 +1,6 @@
 // Upcoming tasks: per-project requirements gathered before a ticket exists. Admins edit; members read.
-import { api, auth, request } from "../api.js";
+import { api, auth } from "../api.js";
+import { fileCard, files as previewFiles } from "../preview.js";
 import { icon } from "../icons.js";
 import { navigate } from "../app.js";
 import { fetchOverlaps, overlapCount } from "../overlaps.js";
@@ -200,10 +201,12 @@ export async function renderUpcomingDetail(main, id) {
               t.can_edit && h("button.btn.sm", { onclick: () => docsInput.click() }, "Upload")),
             docsInput,
             t.documents.length
-              ? h("div.files.inline", t.documents.map((d) => h("div.file",
-                h("button.link", { title: "Download", onclick: () => download(d) }, icon("file", { size: 14 }), ` ${d.filename}`),
-                h("span.muted.small", `${fmtBytes(d.size)} · ${timeAgo(d.created_at)}`),
-                t.can_edit && h("button.icon-btn.small", { "aria-label": `Delete ${d.filename}`, onclick: () => deleteDoc(d) }, icon("x", { size: 14 })))))
+              ? (() => {
+                const sources = t.documents.map((d) => previewFiles.upcomingDoc(d, `${d.uploader?.name || ""}${d.uploader ? " · " : ""}${timeAgo(d.created_at)}`));
+                return h("div.pv-grid", t.documents.map((d, i) => fileCard(sources, i, {
+                  actions: t.can_edit ? h("button.icon-btn.sm", { type: "button", title: "Delete", "aria-label": `Delete ${d.filename}`, onclick: () => deleteDoc(d) }, icon("trash", { size: 15 })) : null,
+                })));
+              })()
               : h("p.muted.small", t.can_edit ? "Upload specs, designs or any supporting files." : "No documents yet.")),
           h("section.card.props.dates",
             h("div.prop", h("span.prop-label", "Project"), h("a", { href: `#/projects/${t.project.id}` }, t.project.name)),
@@ -221,15 +224,6 @@ export async function renderUpcomingDetail(main, id) {
     const fd = new FormData();
     [...files].forEach((f) => fd.append("files", f));
     await busy(null, async () => { await api.upload(`/upcoming/${id}/documents`, fd); toast("Uploaded"); await reload(); });
-  }
-  async function download(d) {
-    try {
-      const res = await request("GET", `/upcoming-documents/${d.id}/download`, { raw: true });
-      const url = URL.createObjectURL(await res.blob());
-      const a = h("a", { href: url, download: d.filename });
-      document.body.append(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 10_000);
-    } catch (err) { toast(err.message, "error"); }
   }
   async function deleteDoc(d) {
     if (!(await confirmDialog("Delete document", `Delete ${d.filename}?`))) return;
