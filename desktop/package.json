@@ -19,6 +19,7 @@
     "electron": "33.4.11",
     "electron-builder": "25.1.8"
   },
+  "homepage": "https://grandway.tech",
   "build": {
     "appId": "tech.grandway.tickets",
     "productName": "Tickets",
