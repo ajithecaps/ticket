@@ -526,6 +526,25 @@ The simplest route is the **Desktop app** GitHub workflow (Actions › Desktop a
 
 Calls in the app need the server on **HTTPS**, the same as in a browser.
 
+## Daily challenge
+
+Sidebar › **Daily challenge** (or `G C`) has one puzzle a day, the same for everyone. The fastest time wins. Four kinds rotate day by day:
+
+| Puzzle | How it works | Penalty |
+|---|---|---|
+| Pair Match | Flip cards to find 10 pairs of dev icons | +1 s per miss |
+| Slide | Order the tiles 1–8 (click or arrow keys) | none |
+| Dev Words | Unscramble 5 developer words | +20 s per skipped word |
+| Math Sprint | 10 sums, getting harder | +5 s per wrong answer |
+
+- **One try a day:** you get one attempt, with a 15-minute limit. The new puzzle arrives at midnight in `TIMEZONE`.
+- **Fair play:** the server keeps the clock and checks every move. Cards are revealed one flip at a time, word and math answers never reach the browser, and slide moves are replayed on the server. A result can't be typed in from the browser console.
+- **Leaderboards:**
+  - **Today** ranks by time plus penalties. It also shows who is playing right now and is refreshed every 15 seconds.
+  - **This week / This month / All time** add up points. Daily places 1–7 earn 10, 8, 6, 5, 4, 3 and 2 points, and anyone else who solves the puzzle gets 1. Ties are broken by wins.
+  - 🔥 **streaks** count days in a row solved.
+- **Reminder:** a dot on the sidebar item shows until you've played today.
+
 ## Notes before production
 
 - **Migrations** are Alembic (`migrations/versions/`). Run `alembic upgrade head` before starting the

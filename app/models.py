@@ -1,9 +1,10 @@
 import enum
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import (
     Boolean,
     Column,
+    Date,
     DateTime,
     Enum as SAEnum,
     Float,
@@ -663,3 +664,29 @@ class ChatSaved(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     message_id: Mapped[int] = mapped_column(ForeignKey("chat_messages.id", ondelete="CASCADE"), primary_key=True, index=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class ChallengeAttempt(Base):
+    """One person's go at the daily challenge (one per day). The server keeps the clock and the puzzle's
+    progress in `state`, so results can't be faked from the browser."""
+
+    __tablename__ = "challenge_attempts"
+    __table_args__ = (UniqueConstraint("user_id", "day", name="uq_challenge_user_day"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    day: Mapped[date] = mapped_column(Date, index=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    started_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    solved: Mapped[bool] = mapped_column(Boolean, default=False)
+    duration_ms: Mapped[int | None] = mapped_column(nullable=True)
+    penalty_ms: Mapped[int] = mapped_column(default=0)
+    moves: Mapped[int] = mapped_column(default=0)
+    state: Mapped[dict] = mapped_column(JSON, default=dict)
+
+    user: Mapped["User"] = relationship()
+
+    @property
+    def score_ms(self) -> int | None:
+        return None if self.duration_ms is None else self.duration_ms + self.penalty_ms

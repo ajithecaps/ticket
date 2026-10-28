@@ -18,7 +18,7 @@ from .chat_hub import hub
 from .jobs import scheduler
 from starlette.concurrency import run_in_threadpool
 from .routers import (
-    attachments, auth, chat, comments, dashboard, desktop, docs, sprints, integrations, notifications, projects, releases, reports, tickets, timeline,
+    attachments, auth, challenge, chat, comments, dashboard, desktop, docs, sprints, integrations, notifications, projects, releases, reports, tickets, timeline,
     upcoming, users,
 )
 from .security import hash_password
@@ -132,7 +132,7 @@ app.add_middleware(
 
 for module in (
     auth, users, projects, tickets, comments, attachments, notifications, reports, integrations, upcoming, releases,
-    timeline, docs, dashboard, sprints, chat, desktop,
+    timeline, docs, dashboard, sprints, chat, desktop, challenge,
 ):
     app.include_router(module.router, prefix=settings.API_PREFIX)
 

@@ -1532,3 +1532,117 @@ def test_desktop_downloads(client, admin, world, tmp_path, monkeypatch):
     assert client.post(f"{D}/downloads/Tickets-1.0.0-mac-arm64.dmg/link", headers=asha["headers"]).status_code == 404
     assert client.post(f"{D}/downloads/notes.txt/link", headers=asha["headers"]).status_code == 404
     assert client.post(f"{D}/downloads/..%2F..%2Fapp.py/link", headers=asha["headers"]).status_code == 404
+
+
+def _solve_slide(board):
+    """Breadth-first search for the 8-puzzle: returns the tiles to move."""
+    from collections import deque
+    from app.routers.challenge import SOLVED_BOARD, _neighbours
+    start, goal = tuple(board), tuple(SOLVED_BOARD)
+    prev = {start: None}
+    q = deque([start])
+    while q:
+        cur = q.popleft()
+        if cur == goal:
+            break
+        blank = cur.index(0)
+        for n in _neighbours(blank):
+            nxt = list(cur)
+            nxt[blank], nxt[n] = nxt[n], 0
+            nxt = tuple(nxt)
+            if nxt not in prev:
+                prev[nxt] = (cur, cur[n])
+                q.append(nxt)
+    moves, cur = [], goal
+    while prev[cur]:
+        cur, tile = prev[cur]
+        moves.append(tile)
+    return moves[::-1]
+
+
+def test_daily_challenge(client, admin, world, monkeypatch):
+    from datetime import date, timedelta
+    from app.routers import challenge as ch
+    asha, kiran, zed = world["asha"], world["kiran"], world["zed"]
+    C = f"{API}/challenge"
+    base = date(2026, 3, 2)
+    day_of = {ch.kind_for(base + timedelta(days=i)): base + timedelta(days=i) for i in range(4)}
+    play_day = {"d": day_of["match"]}
+    monkeypatch.setattr(ch, "today", lambda: play_day["d"])
+
+    # --- pair match: cards are only revealed one flip at a time, misses cost a second
+    info = client.get(f"{C}/today", headers=asha["headers"]).json()
+    assert info["kind"] == "match" and info["attempt"] is None and info["players"] == 0
+    assert client.post(f"{C}/today/flip", headers=asha["headers"], json={"index": 0}).status_code == 409  # not started
+    started = client.post(f"{C}/today/start", headers=asha["headers"]).json()
+    assert started["status"] == "playing" and started["puzzle"] == {"count": 20, "faces": {}, "matched": []}
+    cards = ch.puzzle(play_day["d"])["cards"]
+    miss = next(j for j in range(1, 20) if cards[j] != cards[0])
+    client.post(f"{C}/today/flip", headers=asha["headers"], json={"index": 0})
+    r = client.post(f"{C}/today/flip", headers=asha["headers"], json={"index": miss}).json()
+    assert r["match"] is False and r["attempt"]["penalty_ms"] == 1000
+    seen = set()
+    for i in range(20):
+        if i in seen:
+            continue
+        j = next(k for k in range(20) if k != i and cards[k] == cards[i])
+        seen |= {i, j}
+        client.post(f"{C}/today/flip", headers=asha["headers"], json={"index": i})
+        last = client.post(f"{C}/today/flip", headers=asha["headers"], json={"index": j}).json()
+    assert last["attempt"]["status"] == "done" and last["attempt"]["solved"] and last["attempt"]["moves"] == 11
+    assert last["attempt"]["rank"] == 1
+    assert client.post(f"{C}/today/start", headers=asha["headers"]).json()["status"] == "done"  # once a day
+    assert client.post(f"{C}/today/flip", headers=asha["headers"], json={"index": 0}).status_code == 409
+
+    # kiran solves it with no misses but later; zed gives up
+    client.post(f"{C}/today/start", headers=kiran["headers"])
+    for i, j in {tuple(sorted(k for k in range(20) if cards[k] == s)) for s in set(cards)}:
+        client.post(f"{C}/today/flip", headers=kiran["headers"], json={"index": i})
+        client.post(f"{C}/today/flip", headers=kiran["headers"], json={"index": j})
+    client.post(f"{C}/today/start", headers=zed["headers"])
+    client.post(f"{C}/today/give-up", headers=zed["headers"])
+    board = client.get(f"{C}/leaderboard", headers=zed["headers"]).json()
+    # kiran's clean run beats asha's time plus her 1 s miss penalty
+    assert [r["user"]["id"] for r in board["rows"]] == [kiran["id"], asha["id"]] and board["unfinished"] == 1
+    assert [r["points"] for r in board["rows"]] == [10, 8]
+
+    # --- sliding tiles: the server replays the moves
+    play_day["d"] = day_of["slide"]
+    p = client.post(f"{C}/today/start", headers=asha["headers"]).json()["puzzle"]
+    assert sorted(p["board"]) == list(range(9)) and p["board"] != ch.SOLVED_BOARD
+    moves = _solve_slide(p["board"])
+    assert client.post(f"{C}/today/slide", headers=asha["headers"], json={"moves": moves[:-1]}).json()["detail"] == "Not solved yet"
+    assert client.post(f"{C}/today/slide", headers=asha["headers"], json={"moves": [5, 5, 5]}).status_code == 400
+    done = client.post(f"{C}/today/slide", headers=asha["headers"], json={"moves": moves}).json()["attempt"]
+    assert done["solved"] and done["moves"] == len(moves)
+
+    # --- dev words: answers stay on the server; skipping costs 20 s
+    play_day["d"] = day_of["words"]
+    p = client.post(f"{C}/today/start", headers=asha["headers"]).json()["puzzle"]
+    words = ch.puzzle(play_day["d"])["words"]
+    assert "words" not in p and len(p["scrambled"]) == 5 and all(sorted(s) == sorted(w) for s, w in zip(p["scrambled"], words))
+    assert client.post(f"{C}/today/answer", headers=asha["headers"], json={"item": 0, "answer": "nope"}).json()["correct"] is False
+    for i in range(4):
+        assert client.post(f"{C}/today/answer", headers=asha["headers"], json={"item": i, "answer": words[i].lower()}).json()["correct"]
+    r = client.post(f"{C}/today/skip", headers=asha["headers"], json={"item": 4}).json()
+    assert r["word"] == words[4] and r["attempt"]["solved"] and r["attempt"]["penalty_ms"] == 20_000
+
+    # --- math sprint: wrong answers cost 5 s and must be retried
+    play_day["d"] = day_of["math"]
+    p = client.post(f"{C}/today/start", headers=asha["headers"]).json()["puzzle"]
+    qs = ch.puzzle(play_day["d"])["questions"]
+    assert len(p["questions"]) == 10 and all(isinstance(q, str) for q in p["questions"])
+    assert client.post(f"{C}/today/answer", headers=asha["headers"], json={"item": 0, "answer": str(qs[0]["a"] + 1)}).json()["correct"] is False
+    assert client.post(f"{C}/today/answer", headers=asha["headers"], json={"item": 1, "answer": "1"}).status_code == 400
+    for i, q in enumerate(qs):
+        last = client.post(f"{C}/today/answer", headers=asha["headers"], json={"item": i, "answer": str(q["a"])}).json()
+    assert last["attempt"]["solved"] and last["attempt"]["penalty_ms"] == 5_000
+
+    # --- points add up; asha solved four days in a row (seen from the last of those days)
+    play_day["d"] = max(day_of.values())
+    week = client.get(f"{C}/leaderboard", headers=kiran["headers"], params={"period": "all"}).json()
+    top = week["rows"][0]
+    assert top["user"]["id"] == asha["id"] and top["points"] == 38 and top["wins"] == 3 and top["streak"] == 4
+    assert week["rows"][1]["user"]["id"] == kiran["id"] and week["rows"][1]["points"] == 10 and week["rows"][1]["wins"] == 1
+    assert client.get(f"{C}/today", headers=asha["headers"]).json()["streak"] == 4
+    assert client.get(f"{C}/leaderboard", headers=asha["headers"], params={"period": "year"}).status_code == 422

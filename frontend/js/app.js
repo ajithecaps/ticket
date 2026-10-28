@@ -21,6 +21,7 @@ import { ATTENTION, attentionCounts, renderAttention } from "./views/attention.j
 import { renderLoginPage } from "./views/login.js";
 import { renderChat, startChat, stopChat } from "./views/chat.js";
 import { desktopShell, renderDesktop } from "./views/desktop.js";
+import { refreshChallengeDot, renderChallenge } from "./views/challenge.js";
 
 const root = document.getElementById("app");
 const isAdmin = () => auth.user?.role === "admin";
@@ -34,6 +35,7 @@ const routes = [
   [/^\/projects\/(\d+)(?:\/(board|list|sprints|timeline|docs|upcoming|releases|members|settings))?$/, (el, [id, tab]) => renderProject(el, Number(id), tab || "board")],
   [/^\/notifications$/, renderNotifications],
   [/^\/desktop$/, renderDesktop],
+  [/^\/challenge$/, renderChallenge],
   [/^\/chat(?:\/(\d+))?$/, (el, [id]) => renderChat(el, [id])],
   [/^\/users$/, renderUsers, true],
   [/^\/reports$/, renderReports, true],
@@ -136,6 +138,7 @@ function navSections() {
       { href: "/timeline", label: "Timeline", icon: "timeline", keys: "G L" },
       { href: "/chat", label: "Chat", icon: "message", keys: "G M", chat: true },
       { href: "/notifications", label: "Inbox", icon: "inbox", keys: "G N", badge: true },
+      { href: "/challenge", label: "Daily challenge", icon: "trophy", keys: "G C", challenge: true },
     ]],
     ["Needs attention", Object.entries(ATTENTION).map(([key, c]) => ({
       href: `/${key}`, label: c.title, icon: c.icon, attention: key, ownerOnly: c.ownerOnly,
@@ -210,6 +213,7 @@ function renderShell() {
   icon(it.icon, { size: 18 }), h("span.nav-text", it.label),
   it.badge ? h("span.nav-badge.inbox-count", { hidden: true }) : null,
   it.chat ? h("span.nav-badge.chat-count", { hidden: true }) : null,
+  it.challenge ? h("span.nav-badge.dot-only.challenge-dot", { hidden: true, title: "You haven't played today's challenge yet" }) : null,
   it.attention ? h(`span.nav-count.att-${it.attention}`, { hidden: true }) : null);
 
   clear(root,
@@ -251,6 +255,8 @@ function renderShell() {
     });
     refreshAttention();
   })();
+
+  refreshChallengeDot();
 
   // Mirror the unread count onto the sidebar "Inbox" item.
   const badge = root.querySelector(".inbox-count");
