@@ -485,6 +485,43 @@ hosts) stay in sync through the database alone, without Redis. If you put a prox
 pass WebSocket upgrades for `/api/v1/chat/ws` (nginx: `proxy_set_header Upgrade $http_upgrade;
 proxy_set_header Connection "upgrade";`).
 
+## Desktop app
+
+People can install Tickets as a desktop app for **macOS, Windows and Linux**. After signing in on the web, they open
+**account menu › Get the desktop app** (or `#/desktop`). The page picks the right installer for their computer, including Apple silicon vs Intel. Download links only work for signed-in people and expire after 10 minutes.
+
+What the app adds over a browser tab:
+- **Badges and attention:** unread and mention counts on the dock or taskbar. The dock bounces or the taskbar flashes for mentions and DMs, and keeps going for incoming calls.
+- **Stays running:** closing the window keeps it in the macOS dock or the Windows tray, so messages and calls still arrive.
+- **Notifications and media:** native notifications that bring the window back when clicked. Microphone and camera prompts work properly, and there is a screen-share picker for a whole screen or a single window.
+- **Updates:** a notification when a newer version is published on the server, and **Check for updates** in the menu.
+- **Locked to your server:** it only loads your server. Other links open in the normal browser, and pages get no Node or file-system access.
+
+The app is a thin [Electron](https://www.electronjs.org/) shell (`desktop/`) around the web app. Every web deploy shows up in it straight away; you only rebuild the installers to change the shell itself.
+
+**Build the installers** (Node 20+):
+
+```bash
+cd desktop
+npm install
+TICKETS_SERVER_URL=https://tickets.example.com npm run dist:mac    # .dmg for Apple silicon + Intel
+TICKETS_SERVER_URL=https://tickets.example.com npm run dist:win    # Windows setup .exe (works from a Mac too)
+TICKETS_SERVER_URL=https://tickets.example.com npm run dist:linux  # .AppImage + .deb (.deb needs Linux)
+```
+
+`TICKETS_SERVER_URL` is baked in, so the app opens straight on your login page. Without it, the app asks for the address on first launch; it can be changed later from **menu › Change server…**.
+
+The simplest route is the **Desktop app** GitHub workflow (Actions › Desktop app › Run workflow). It builds all three platforms; you then download the artifacts.
+
+**Publish them:** copy the files from `desktop/dist/` (`Tickets-<version>-*.dmg / .exe / .AppImage / .deb`) into `desktop-builds/` next to `docker-compose.yml`. That folder is mounted into the container (`DESKTOP_DIR`). The page offers the newest version found there and needs no restart. To release an update, bump `"version"` in `desktop/package.json`, rebuild and copy the new files in. Running apps will announce it.
+
+**Signing:** builds are unsigned unless you add certificates, so people see a one-time warning.
+- macOS: right-click the app › Open (the Mac build is ad-hoc signed, so it never says "damaged").
+- Windows: SmartScreen › More info › Run anyway.
+- To remove the warnings, add an Apple Developer ID and/or a Windows code-signing certificate as `CSC_LINK` / `CSC_KEY_PASSWORD` secrets (plus `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` for notarisation). The workflow uses them automatically.
+
+Calls in the app need the server on **HTTPS**, the same as in a browser.
+
 ## Notes before production
 
 - **Migrations** are Alembic (`migrations/versions/`). Run `alembic upgrade head` before starting the

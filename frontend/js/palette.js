@@ -40,6 +40,7 @@ export function openPalette(initial = "") {
     ...navItems.map((n) => ({ group: "Go to", label: n.label, icon: n.icon, hint: n.keys, run: () => actions.navigate(n.href) })),
     { group: "Actions", label: "Create ticket", icon: "plus", hint: "C", run: () => actions.newTicket() },
     { group: "Actions", label: "New documentation page", icon: "docs", run: () => actions.navigate("/docs/new") },
+    { group: "Actions", label: "Download the desktop app", icon: "download", run: () => actions.navigate("/desktop") },
     { group: "Actions", label: `Switch theme (now ${getTheme()})`, icon: getTheme() === "dark" ? "moon" : getTheme() === "light" ? "sun" : "monitor",
       run: () => setTheme({ system: "light", light: "dark", dark: "system" }[getTheme()]) },
     { group: "Actions", label: "Keyboard shortcuts", icon: "keyboard", hint: "?", run: () => showShortcuts() },

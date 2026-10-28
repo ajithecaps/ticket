@@ -2493,3 +2493,35 @@ body.pv-open { overflow: hidden; }
 .link-title { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .link-host { font-size: 11.5px; color: var(--muted); }
 .link-by { padding-left: 40px; }
+
+/* ============================================================================ desktop app page */
+.dl-hero { display: flex; align-items: center; gap: 24px; padding: 28px; margin-top: 20px; background:
+  radial-gradient(120% 140% at 100% 0%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 60%), var(--surface); }
+.dl-logo { width: 84px; height: 84px; flex: none; filter: drop-shadow(0 8px 18px color-mix(in srgb, var(--accent) 35%, transparent)); }
+.dl-hero-text { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.dl-hero h2 { margin: 0; font-size: 22px; letter-spacing: -.01em; }
+.dl-hero p { margin: 0; }
+.dl-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; margin-top: 10px; }
+.btn.btn-lg { height: 44px; padding: 0 20px; font-size: 15px; }
+.dl-features { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 16px; }
+.dl-feature { display: flex; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.dl-feature p { margin: 2px 0 0; }
+.dl-feature-ic { width: 34px; height: 34px; flex: none; display: grid; place-items: center; border-radius: 9px; background: var(--accent-soft); color: var(--accent-text); }
+.dl-all-title { margin: 28px 0 10px; font-size: 15px; }
+.dl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; align-items: start; }
+.dl-os { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+.dl-os.mine { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.dl-os-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dl-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.dl-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.dl-list li > div { display: flex; flex-direction: column; min-width: 0; }
+.dl-install summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.dl-install ol { margin: 8px 0 0; padding-left: 18px; font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
+.dl-empty { margin-top: 20px; padding: 36px 28px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--muted); }
+.dl-empty h2 { margin: 6px 0 0; font-size: 18px; color: var(--text); }
+.dl-admin { max-width: 560px; width: 100%; }
+.dl-admin pre { text-align: left; background: var(--surface-2); border-radius: 8px; padding: 12px 14px; font-size: 12.5px; overflow-x: auto; color: var(--text); }
+@media (max-width: 640px) {
+  .dl-hero { flex-direction: column; align-items: flex-start; padding: 20px; }
+  .dl-logo { width: 64px; height: 64px; }
+}

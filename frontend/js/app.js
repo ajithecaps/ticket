@@ -20,6 +20,7 @@ import { renderDocEditor, renderDocHistory, renderDocPage, renderDocsHome } from
 import { ATTENTION, attentionCounts, renderAttention } from "./views/attention.js";
 import { renderLoginPage } from "./views/login.js";
 import { renderChat, startChat, stopChat } from "./views/chat.js";
+import { desktopShell, renderDesktop } from "./views/desktop.js";
 
 const root = document.getElementById("app");
 const isAdmin = () => auth.user?.role === "admin";
@@ -32,6 +33,7 @@ const routes = [
   [/^\/projects$/, renderProjects],
   [/^\/projects\/(\d+)(?:\/(board|list|sprints|timeline|docs|upcoming|releases|members|settings))?$/, (el, [id, tab]) => renderProject(el, Number(id), tab || "board")],
   [/^\/notifications$/, renderNotifications],
+  [/^\/desktop$/, renderDesktop],
   [/^\/chat(?:\/(\d+))?$/, (el, [id]) => renderChat(el, [id])],
   [/^\/users$/, renderUsers, true],
   [/^\/reports$/, renderReports, true],
@@ -182,6 +184,7 @@ function renderShell() {
       }, icon(ic, { size: 14 }), text)))),
     h("button", { onclick: () => { closeAccount(); showShortcuts(); } }, icon("keyboard"), "Keyboard shortcuts", h("kbd.menu-kbd", "?")),
     h("button", { onclick: () => { closeAccount(); changePassword(); } }, icon("key"), "Change password"),
+    h("button", { onclick: () => { closeAccount(); navigate("/desktop"); } }, icon("download"), desktopShell() ? `Desktop app ${desktopShell().version}` : "Get the desktop app"),
     h("button", { onclick: logout }, icon("logout"), "Log out"));
   const account = h("div.dropdown.account",
     h("button.account-btn", {

@@ -32,6 +32,24 @@ def create_access_token(user_id: int, expires_minutes: int | None = None) -> str
 def decode_access_token(token: str) -> int | None:
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        if "purpose" in payload:  # a single-purpose link token is never a login
+            return None
+        return int(payload["sub"])
+    except (jwt.PyJWTError, KeyError, ValueError):
+        return None
+
+
+def create_link_token(user_id: int, purpose: str, subject: str, expires_minutes: int = 10) -> str:
+    """Short-lived token for a plain <a href> download, where the browser cannot send the Authorization header."""
+    payload = {"sub": str(user_id), "purpose": purpose, "obj": subject, "exp": utcnow() + timedelta(minutes=expires_minutes)}
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+
+
+def decode_link_token(token: str, purpose: str, subject: str) -> int | None:
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        if payload.get("purpose") != purpose or payload.get("obj") != subject:
+            return None
         return int(payload["sub"])
     except (jwt.PyJWTError, KeyError, ValueError):
         return None

@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     CHAT_TURN_USERNAME: str = ""
     CHAT_TURN_CREDENTIAL: str = ""
     CHAT_MAX_CALL_PEOPLE: int = 8
+    # Desktop app installers (built from desktop/) are served from here to signed-in people.
+    DESKTOP_DIR: str = "desktop-builds"
     # Local time zone for the daily summary schedule and dates shown in Slack.
     TIMEZONE: str = "Asia/Kolkata"
 

@@ -72,6 +72,7 @@ function paintBadge() {
     el.classList.toggle("dot-only", !mentions);
     el.title = mentions ? `${mentions} mention${mentions === 1 ? "" : "s"} or direct messages` : `${unread} conversation${unread === 1 ? "" : "s"} with new messages`;
   });
+  window.desktop?.setBadge(mentions, unread > 0); // dock / taskbar in the desktop app
 }
 
 function mentionsMe(body) {
@@ -88,13 +89,14 @@ function desktopNotify(msg) {
   if (!isDm && !mentionsMe(msg.body)) return;
   const visibleHere = !document.hidden && shared.viewing === msg.channel_id;
   if (visibleHere) return;
+  window.desktop?.attention();
   const who = msg.user?.name || "Someone";
   const title = isDm ? who : `${who} in ${ch.kind === "project" ? ch.display_name : "#" + ch.name}`;
   const body = plainText(msg.body) || (msg.files.length ? `Sent ${msg.files.length} file${msg.files.length === 1 ? "" : "s"}` : "");
   if ("Notification" in window && Notification.permission === "granted") {
     try {
       const n = new Notification(title, { body: body.slice(0, 180), tag: `chat-${msg.channel_id}`, renotify: true });
-      n.onclick = () => { window.focus(); location.hash = `#/chat/${msg.channel_id}?m=${msg.id}`; n.close(); };
+      n.onclick = () => { window.desktop?.focus(); window.focus(); location.hash = `#/chat/${msg.channel_id}?m=${msg.id}`; n.close(); };
     } catch { /* some browsers only allow notifications from a service worker */ }
   } else if (!location.hash.startsWith("#/chat")) {
     toast(`${title}: ${body.slice(0, 80)}`);
@@ -167,6 +169,7 @@ export function stopChat() {
   realtime.stop();
   shared.channels.clear();
   shared.usersLoaded = null;
+  window.desktop?.setBadge(0);
 }
 
 // ============================================================================ small helpers

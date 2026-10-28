@@ -1500,3 +1500,35 @@ def test_chat_personal_space(client, admin, world):
     # can't save what you can't read; unsaving toggles
     assert client.post(f"{C}/messages/{note['id']}/save", headers=zed["headers"]).status_code == 404
     assert client.post(f"{C}/messages/{other['id']}/save", headers=asha["headers"]).json()["saved"] is False
+
+
+def test_desktop_downloads(client, admin, world, tmp_path, monkeypatch):
+    asha = world["asha"]
+    D = f"{API}/desktop"
+    monkeypatch.setattr(settings, "DESKTOP_DIR", str(tmp_path))
+    assert client.get(f"{D}/info").json()["version"] is None
+    assert client.get(f"{D}/downloads", headers=asha["headers"]).json() == {"version": None, "builds": []}
+
+    for name in ("Tickets-1.0.0-mac-arm64.dmg", "Tickets-1.2.0-mac-arm64.dmg", "Tickets-1.2.0-mac-x64.dmg",
+                 "Tickets-1.2.0-windows-x64-setup.exe", "Tickets-1.2.0-linux-x86_64.AppImage", "Tickets-1.2.0-linux-amd64.deb",
+                 "latest-mac.yml", "notes.txt"):
+        (tmp_path / name).write_bytes(b"x" * 10)
+    assert client.get(f"{D}/info").json()["version"] == "1.2.0"  # public: the app checks it for updates
+    assert client.get(f"{D}/downloads").status_code == 401  # the list needs a login
+    listing = client.get(f"{D}/downloads", headers=asha["headers"]).json()
+    assert listing["version"] == "1.2.0"
+    assert {(b["os"], b["kind"], b["arch"]) for b in listing["builds"]} == {
+        ("mac", "dmg", "arm64"), ("mac", "dmg", "x64"), ("windows", "installer", "x64"), ("linux", "AppImage", "x64"), ("linux", "deb", "x64")}
+
+    # a short-lived link downloads the file without the Authorization header
+    url = client.post(f"{D}/downloads/Tickets-1.2.0-mac-arm64.dmg/link", headers=asha["headers"]).json()["url"]
+    r = client.get(url)
+    assert r.status_code == 200 and r.content == b"x" * 10 and "Tickets-1.2.0-mac-arm64.dmg" in r.headers["content-disposition"]
+    # the link is for that file only, can't be used as a login, and old versions / other files aren't offered
+    token = url.split("t=")[1]
+    assert client.get(f"{D}/file/Tickets-1.2.0-mac-x64.dmg", params={"t": token}).status_code == 403
+    assert client.get(f"{API}/auth/me", headers={"Authorization": f"Bearer {token}"}).status_code == 401
+    assert client.get(f"{D}/file/Tickets-1.2.0-mac-arm64.dmg", params={"t": "junk"}).status_code == 403
+    assert client.post(f"{D}/downloads/Tickets-1.0.0-mac-arm64.dmg/link", headers=asha["headers"]).status_code == 404
+    assert client.post(f"{D}/downloads/notes.txt/link", headers=asha["headers"]).status_code == 404
+    assert client.post(f"{D}/downloads/..%2F..%2Fapp.py/link", headers=asha["headers"]).status_code == 404

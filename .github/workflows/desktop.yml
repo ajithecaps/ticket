@@ -1,0 +1,59 @@
+# Builds the desktop app for macOS, Windows and Linux. Run it from the Actions tab
+# ("Run workflow", enter your server address) or push a tag like desktop-v1.0.1.
+# Download the "desktop-*" artifacts and copy the installers into desktop-builds/ on the server.
+name: Desktop app
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: "Server address baked into the app (e.g. https://tickets.example.com)"
+        required: false
+  push:
+    tags: ["desktop-v*"]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: --mac
+          - os: windows-latest
+            target: --win
+          - os: ubuntu-latest
+            target: --linux
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci
+      - name: Build
+        run: npm run prepare-build && npx electron-builder ${{ matrix.target }} --publish never
+        env:
+          # inputs on a manual run, otherwise the repository variable TICKETS_SERVER_URL
+          TICKETS_SERVER_URL: ${{ inputs.server_url || vars.TICKETS_SERVER_URL }}
+          # optional code signing: add these repository secrets to sign / notarize
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ runner.os }}
+          path: |
+            desktop/dist/Tickets-*.dmg
+            desktop/dist/Tickets-*.exe
+            desktop/dist/Tickets-*.AppImage
+            desktop/dist/Tickets-*.deb
+          if-no-files-found: error

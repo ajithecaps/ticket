@@ -26,10 +26,13 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg2://tickets:tickets@db:5432/tickets
       UPLOAD_DIR: /srv/uploads
+      DESKTOP_DIR: /srv/desktop-builds
     ports:
       - "28001:8000"
     volumes:
       - uploads:/srv/uploads
+      # desktop app installers (built from desktop/) - drop new ones here, no rebuild needed
+      - ./desktop-builds:/srv/desktop-builds:ro
     networks:
       - nginx_network
 

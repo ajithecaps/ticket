@@ -1,0 +1,101 @@
+{
+  "name": "tickets-desktop",
+  "productName": "Tickets",
+  "version": "1.0.0",
+  "description": "Desktop app for the Developer Ticket System",
+  "main": "src/main.js",
+  "author": "Grandway",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "prepare-build": "node scripts/prepare.js",
+    "dist": "npm run prepare-build && electron-builder",
+    "dist:mac": "npm run prepare-build && electron-builder --mac",
+    "dist:win": "npm run prepare-build && electron-builder --win",
+    "dist:linux": "npm run prepare-build && electron-builder --linux"
+  },
+  "devDependencies": {
+    "electron": "33.4.11",
+    "electron-builder": "25.1.8"
+  },
+  "build": {
+    "appId": "tech.grandway.tickets",
+    "productName": "Tickets",
+    "artifactName": "Tickets-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/server.json",
+        "to": "server.json"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Tickets uses the microphone for audio and video calls.",
+        "NSCameraUsageDescription": "Tickets uses the camera for video calls."
+      }
+    },
+    "dmg": {
+      "artifactName": "Tickets-${version}-mac-${arch}.${ext}"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Tickets-${version}-windows-${arch}-setup.${ext}"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "category": "Office",
+      "maintainer": "Grandway <support@grandway.tech>"
+    },
+    "afterPack": "scripts/adhoc-sign.js"
+  }
+}

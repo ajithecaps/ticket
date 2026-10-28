@@ -170,11 +170,12 @@ function showRing(ev) {
   document.body.append(card);
   ringing.set(call.id, { close, card });
   sounds.ring();
+  window.desktop?.attention(true); // bounce the dock / flash the taskbar until answered
   let notification = null;
   if ("Notification" in window && Notification.permission === "granted" && document.hidden) {
     try {
       notification = new Notification(`${caller.name} is calling`, { body: where, tag: `call-${call.id}`, requireInteraction: true });
-      notification.onclick = () => { window.focus(); notification.close(); };
+      notification.onclick = () => { window.desktop?.focus(); window.focus(); notification.close(); };
     } catch { /* not allowed from the page */ }
   }
   const timer = setTimeout(() => close(true), RING_TIMEOUT_MS);
