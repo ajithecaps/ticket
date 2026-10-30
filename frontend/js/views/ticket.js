@@ -7,8 +7,9 @@ import { sprintChip } from "./sprints.js";
 import {
   PRIORITIES, STATUSES, TYPES, avatar, busy, clear, confirmDialog, copyText, field, markdownEditor, renderMarkdown, fmtBytes, fmtDate, fmtDateTime,
   fmtHours, formData, fromDateInput, fromStartInput, h, label, modal, priorityBadge, select, statusBadge, timeAgo,
-  toDateInput, toast, typeBadge, userChip, userPicker,
+  toDateInput, toast, typeBadge, userChip, assigneesPicker,
 } from "../ui.js";
+import { cheerIfMine } from "./coach.js";
 
 // ----------------------------------------------------------------------------- create
 /**
@@ -16,7 +17,7 @@ import {
  * Assignee can only be set by owners; for others the field is hidden.
  */
 export function newTicketDialog(projects, preselect, ctx) {
-  let assignee = null;
+  let assignees = [];
   const assigneeSlot = h("div");
   const startSlot = h("div");
   const overlapSlot = h("div");
@@ -27,19 +28,22 @@ export function newTicketDialog(projects, preselect, ctx) {
   let overlapReq = 0;
   async function checkOverlap() {
     const req = ++overlapReq;
-    const ov = await fetchOverlaps(assignee, { start: fromStartInput(startInput.value), end: fromDateInput(dueInput.value) });
-    if (req === overlapReq) overlapSlot.replaceChildren(...[overlapCount(ov)].filter(Boolean));
+    const window = { start: fromStartInput(startInput.value), end: fromDateInput(dueInput.value) };
+    const all = await Promise.all(assignees.map((u) => fetchOverlaps(u, window)));
+    if (req === overlapReq) overlapSlot.replaceChildren(...all.map((ov) => personClash(ov, assignees.length > 1)).filter(Boolean));
   }
   const projectSel = select("project", projects.map((p) => [String(p.id), `${p.key} · ${p.name}`]), preselect || projects[0]?.id, {
     onchange: () => drawAssignee(),
   });
 
   function drawAssignee() {
-    assignee = null;
+    assignees = [];
     const p = projects.find((x) => String(x.id) === projectSel.value);
     const isOwner = ctx ? ctx.owner : p && (p.my_role === "owner" || p.my_role === "admin");
-    clear(assigneeSlot, isOwner && field("Assignee",
-      userPicker((q) => api.get("/users/lookup", { q, project_id: p.id, limit: 10 }), (u) => { assignee = u; checkOverlap(); }, { allowNone: true, placeholder: "Unassigned" })));
+    clear(assigneeSlot, isOwner && field("Assignees",
+      assigneesPicker((q) => api.get("/users/lookup", { q, project_id: p.id, limit: 10 }), {
+        onChange: (list) => { assignees = list; checkOverlap(); }, placeholder: "Add another person…",
+      }).el, "One or more people - the first is the lead"));
     startInput.value = isOwner ? startInput.value : "";
     clear(startSlot, isOwner && field("Start date", startInput));
     sprintSel = null;
@@ -83,7 +87,7 @@ export function newTicketDialog(projects, preselect, ctx) {
     };
     if (startInput.value && startSlot.childElementCount) body.start_date = fromStartInput(startInput.value);
     if (sprintSel && sprintSel.value) body.sprint_id = Number(sprintSel.value);
-    if (assignee) body.assignee_id = assignee.id;
+    if (assignees.length) body.assignee_ids = assignees.map((u) => u.id);
     busy(form.querySelector("[type=submit]"), async () => {
       const t = await api.post(`/projects/${projectSel.value}/tickets`, body);
       m.close();
@@ -139,6 +143,7 @@ export async function renderTicket(main, key) {
           try {
             await api.post(`/tickets/${t.id}/status`, { status: e.target.value });
             toast(`Moved to ${label(e.target.value)}`);
+            cheerIfMine(t, e.target.value);
           } finally { await refresh(); loadTab(); }
         }),
       })
@@ -175,7 +180,7 @@ export async function renderTicket(main, key) {
     return h("div.banner.pending",
       h("span.banner-icon", "⏳"),
       h("div.grow", h("strong", "Ready for verification"),
-        h("div.muted", `${t.assignee ? t.assignee.name : "The assignee"} marked this done. Check the work, then verify it or send it back.`)),
+        h("div.muted", `${t.assignees.length ? t.assignees.map((u) => u.name.split(/\s+/)[0]).join(" & ") : "The assignee"} marked this done. Check the work, then verify it or send it back.`)),
       h("div.row.wrap",
         h("button.btn.sm", { onclick: sendBack }, "Send back"),
         h("button.btn.sm.success", {
@@ -200,7 +205,7 @@ export async function renderTicket(main, key) {
       e.preventDefault();
       busy(form.querySelector("[type=submit]"), async () => {
         if (reason.value.trim()) {
-          await api.post(`/tickets/${t.id}/comments`, { body: `**Sent back for rework**\n\n${reason.value.trim()}`, mention_user_ids: t.assignee ? [t.assignee.id] : [] });
+          await api.post(`/tickets/${t.id}/comments`, { body: `**Sent back for rework**\n\n${reason.value.trim()}`, mention_user_ids: t.assignees.map((u) => u.id) });
         }
         await api.post(`/tickets/${t.id}/status`, { status: statusSel2.value });
         m.close();
@@ -243,47 +248,50 @@ export async function renderTicket(main, key) {
   // ---- sidebar: people, dates, estimates (each editable per permission)
   function drawSidebar() {
     const canOwner = isOwner;
-    const canEstimate = isOwner || t.assignee?.id === auth.user.id;
+    const mine = t.assignees.some((u) => u.id === auth.user.id);
+    const canEstimate = isOwner || mine;
+    const closed = ["done", "verified"].includes(t.status);
 
     const patch = (body) => busy(null, async () => { await api.patch(`/tickets/${t.id}`, body); await refresh(); loadTab(); });
 
-    const assigneeCell = canOwner
-      ? h("div.inline-edit",
-        userPicker((q) => api.get("/users/lookup", { q, project_id: t.project.id, limit: 10 }), (u) => {
-          if ((u?.id ?? null) === (t.assignee?.id ?? null)) return;
-          busy(null, async () => {
-            if (u && !(await confirmIfOverlapping(u, { start: t.start_date, end: t.due_date, excludeId: t.id }))) {
-              drawSidebar(); // back to the current assignee
-              return;
-            }
-            await api.post(`/tickets/${t.id}/assign`, { assignee_id: u ? u.id : null });
-            toast(u ? `Assigned to ${u.name}` : "Unassigned");
-            await refresh(); loadTab();
-          });
-        }, { allowNone: true, initial: t.assignee, placeholder: "Unassigned" }),
-        t.status === "done" && h("span.hint", "Reopen the ticket before reassigning."))
-      : userChip(t.assignee);
+    const saveAssignees = (list) => busy(null, async () => {
+      const before = new Set(t.assignees.map((u) => u.id));
+      for (const u of list.filter((x) => !before.has(x.id))) {
+        if (!(await confirmIfOverlapping(u, { start: t.start_date, end: t.due_date, excludeId: t.id }))) { drawSidebar(); return; }
+      }
+      try {
+        await api.post(`/tickets/${t.id}/assign`, { assignee_ids: list.map((u) => u.id) });
+      } catch (err) { drawSidebar(); throw err; }
+      const added = list.filter((x) => !before.has(x.id));
+      toast(!list.length ? "Unassigned" : added.length ? `Added ${added.map((u) => u.name.split(/\s+/)[0]).join(", ")}` : "Assignees updated");
+      await refresh(); loadTab();
+    });
 
-    const meAssign = canOwner && t.assignee?.id !== auth.user.id && t.status !== "done" &&
+    const assigneeCell = canOwner && !closed
+      ? assigneesPicker((q) => api.get("/users/lookup", { q, project_id: t.project.id, limit: 10 }), {
+        initial: t.assignees, onChange: saveAssignees, placeholder: "Add another person…",
+      }).el
+      : h("div.assignee-list", t.assignees.length ? t.assignees.map((u, i) => h("div.assignee-line", userChip(u), i === 0 && t.assignees.length > 1 ? h("span.lead-tag", "Lead") : null)) : userChip(null),
+        canOwner && closed ? h("span.hint", "Reopen the ticket to change who works on it.") : null);
+
+    const meAssign = canOwner && !mine && !closed &&
       h("button.link.small", {
-        onclick: () => busy(null, async () => {
-          if (!(await confirmIfOverlapping(auth.user, { start: t.start_date, end: t.due_date, excludeId: t.id }))) return;
-          await api.post(`/tickets/${t.id}/assign`, { assignee_id: auth.user.id }); toast("Assigned to you"); await refresh(); loadTab();
-        }),
-      }, "Assign to me");
+        onclick: () => saveAssignees([...t.assignees, auth.user]),
+      }, t.assignees.length ? "Add me" : "Assign to me");
 
     const row = (name, value) => h("div.prop", h("span.prop-label", name), h("div.prop-value", value));
 
-    // The current assignee's other work in the same days (owners, or the assignee looking at their own ticket).
+    // Each assignee's other work in the same days (owners see everyone; an assignee sees their own).
     const clashSlot = h("div.clash-slot");
-    if (t.assignee && t.due_date && !["done", "verified"].includes(t.status) && (canOwner || t.assignee.id === auth.user.id)) {
-      fetchOverlaps(t.assignee, { start: t.start_date, end: t.due_date, excludeId: t.id })
-        .then((ov) => clashSlot.replaceChildren(...[overlapCount(ov)].filter(Boolean)));
+    const checkWho = canOwner ? t.assignees : t.assignees.filter((u) => u.id === auth.user.id);
+    if (checkWho.length && t.due_date && !closed) {
+      Promise.all(checkWho.map((u) => fetchOverlaps(u, { start: t.start_date, end: t.due_date, excludeId: t.id })))
+        .then((all) => clashSlot.replaceChildren(...all.map((ov) => personClash(ov, t.assignees.length > 1)).filter(Boolean)));
     }
 
     clear(sidebar, h("div.card.props",
-      row("Assignee", [assigneeCell, meAssign, clashSlot]),
-      row("Reporter", userChip(t.reporter)),
+      row(t.assignees.length > 1 ? "Assignees" : "Assignee", [assigneeCell, meAssign, clashSlot]),
+      row("Reporter", h("a.plain-link", { href: `#/people/${t.reporter.id}` }, userChip(t.reporter))),
       (canOwner && projectSprints.some((s) => s.status !== "completed")) || t.sprint ? row("Sprint", canOwner && !(t.sprint && t.sprint.status === "completed")
         ? h("div.inline-edit",
           select("sprint", [["", "Backlog (no sprint)"], ...projectSprints.filter((s) => s.status !== "completed")
@@ -599,6 +607,13 @@ async function worklog(el, t, isOwner, onChange) {
       : h("p.muted.pad", "No time logged yet."));
 }
 
+/** "⚠ 2 overlapping · View", prefixed with the person's name when several people are on the ticket. */
+function personClash(ov, named) {
+  const line = overlapCount(ov);
+  if (!line || !named) return line;
+  return h("div.clash-person", h("span.muted.small", `${ov.user.name.split(/\s+/)[0]}:`), line);
+}
+
 // ----------------------------------------------------------------------------- activity
 const ACTIONS = {
   created: () => "created the ticket",
@@ -606,6 +621,7 @@ const ACTIONS = {
   status_changed: () => "changed status",
   assigned: () => "assigned",
   unassigned: () => "unassigned",
+  lead_changed: () => "changed the lead",
   reassigned: () => "reassigned",
   commented: () => "commented",
   attachment_added: () => "attached",
@@ -635,7 +651,7 @@ async function activity(el, t) {
     api.get("/users/lookup", { project_id: t.project.id, limit: 50 }),
   ]);
   const people = new Map(members.map((u) => [u.id, u.name]));
-  [t.reporter, t.assignee].forEach((u) => u && people.set(u.id, u.name));
+  [t.reporter, ...t.assignees].forEach((u) => u && people.set(u.id, u.name));
   const shown = (a) => !["time_logged", "overdue_alert", "converted", "release_added", "release_removed", "released", "sprint_moved"].includes(a.action)
     && (a.old_value || a.new_value);
   clear(el, items.length

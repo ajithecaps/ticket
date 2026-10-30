@@ -5,7 +5,7 @@ import { api } from "../api.js";
 import { currentQuery, setQuery } from "../app.js";
 import {
   avatar, clear, emptyState, errorBox, fmtDate, fmtHours, fromDateInput, fromStartInput, h, label, parseDate, spinner,
-  toast,
+  toast, avatarStack,
 } from "../ui.js";
 
 const DAY = 86400000;
@@ -291,7 +291,7 @@ export async function renderTimeline(main, { projectId = null } = {}) {
       bar.style.width = `${Math.max(px - 2, (b - a + 1) * px - 2)}px`;
       lbl.style.left = `${(b + 1) * px + 6}px`;
     };
-    const lbl = h("span.g-label", h("b", t.key), " ", t.title, showAssignee && t.assignee ? h("span.muted", ` · ${t.assignee.name}`) : null,
+    const lbl = h("span.g-label", h("b", t.key), " ", t.title, showAssignee && t.assignees.length ? h("span.muted", ` · ${t.assignees.map((u) => u.name).join(", ")}`) : null,
       pct && !finished ? h("span.muted", ` · ${pct}%`) : null);
     place();
 
@@ -306,7 +306,7 @@ export async function renderTimeline(main, { projectId = null } = {}) {
         h("span.c-title", { title: t.title },
           h(`i.status-dot.status-${t.status}`),
           h("span.ellipsis", t.title),
-          showAssignee && t.assignee ? avatar(t.assignee, "sm") : null,
+          showAssignee && t.assignees.length ? avatarStack(t.assignees, "sm") : null,
           t.overlaps.length && !finished ? h("span.g-clash", { title: `Overlaps ${t.overlaps.join(", ")}` }, "⚠") : null),
         h(`span.c-date${t.start_planned ? "" : ".muted"}`, { title: t.start_planned ? "Planned start" : "No planned start: from assignment" }, short(s)),
         h(`span.c-date${t.is_overdue ? ".danger-text" : ""}`, short(e)),
@@ -376,7 +376,7 @@ export async function renderTimeline(main, { projectId = null } = {}) {
       h("div.g-tip-title", t.title),
       h("dl",
         h("dt", "Project"), h("dd", t.project.name),
-        h("dt", "Assignee"), h("dd", t.assignee ? t.assignee.name : "—"),
+        h("dt", t.assignees.length > 1 ? "Assignees" : "Assignee"), h("dd", t.assignees.length ? t.assignees.map((u) => u.name).join(", ") : "—"),
         h("dt", t.start_planned ? "Start" : "From"), h("dd", fmtDate(t.window_start)),
         h("dt", "Due"), h("dd", { class: t.is_overdue ? "danger-text" : "" }, `${fmtDate(t.window_end)}${t.is_overdue ? " (overdue)" : ""}`),
         h("dt", "Duration"), h("dd", `${span} day${span > 1 ? "s" : ""}`),

@@ -1,7 +1,8 @@
 """Developer efficiency metrics.
 
-Cohort: every ticket whose *current* assignee received it (`assigned_at`) inside the chosen period
-(all time when no dates are given). Measured as of "now".
+Cohort: every ticket a person is currently assigned to, received (`assigned_at`) inside the chosen
+period (all time when no dates are given). A ticket shared by several people counts for each of them.
+Measured as of "now".
 
 Metric definitions
 ------------------
@@ -25,7 +26,7 @@ from datetime import datetime
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
-from .models import CLOSED_STATUSES, ProjectMember, ProjectRole, Role, Ticket, TicketStatus, User
+from .models import CLOSED_STATUSES, ProjectMember, ProjectRole, Role, Ticket, TicketStatus, User, assigned_to
 from .schemas import (
     DeveloperEfficiency,
     DeveloperEfficiencyDetail,
@@ -128,14 +129,16 @@ def _cohort(
     if project_id is not None:
         stmt = stmt.where(Ticket.project_id == project_id)
     if user_id is not None:
-        stmt = stmt.where(Ticket.assignee_id == user_id)
+        stmt = stmt.where(assigned_to(user_id))
     if date_from is not None:
         stmt = stmt.where(Ticket.assigned_at >= date_from)
     if date_to is not None:
         stmt = stmt.where(Ticket.assigned_at < date_to)  # exclusive upper bound
     by_user: dict[int, list[Ticket]] = defaultdict(list)
     for ticket in db.scalars(stmt).unique():
-        by_user[ticket.assignee_id].append(ticket)
+        for uid in ticket.assignee_ids:
+            if user_id is None or uid == user_id:
+                by_user[uid].append(ticket)
     return by_user
 
 

@@ -63,14 +63,14 @@ async function download(b, btn) {
 }
 
 const INSTALL = {
-  mac: ["Open the downloaded .dmg and drag Tickets into Applications.",
-    "First launch: if macOS says it can't check the app, right-click Tickets in Applications › Open › Open (or System Settings › Privacy & Security › Open Anyway).",
+  mac: ["Open the downloaded .dmg and drag Grandesk into Applications.",
+    "First launch: if macOS says it can't check the app, right-click Grandesk in Applications › Open › Open (or System Settings › Privacy & Security › Open Anyway).",
     "Allow the microphone and camera when your first call asks."],
   windows: ["Run the downloaded setup file and follow the steps.",
     "If SmartScreen appears, choose More info › Run anyway.",
-    "Closing the window keeps Tickets in the tray so calls still ring - quit from the tray icon."],
-  linux: ["AppImage: make it executable (chmod +x Tickets-*.AppImage) and run it.",
-    "Debian / Ubuntu: sudo apt install ./Tickets-*.deb",
+    "Closing the window keeps Grandesk in the tray so calls still ring - quit from the tray icon."],
+  linux: ["AppImage: make it executable (chmod +x Grandesk-*.AppImage) and run it.",
+    "Debian / Ubuntu: sudo apt install ./Grandesk-*.deb",
     "Calls need PipeWire or PulseAudio, as in any browser."],
 };
 
@@ -91,7 +91,7 @@ export async function renderDesktop(main) {
 
   const head = h("div.page-head",
     h("div", h("h1", "Desktop app"),
-      h("p.muted", "Tickets in its own window - dock and taskbar badges, native notifications, and calls that ring even when your browser is closed.")));
+      h("p.muted", "Grandesk in its own window - dock and taskbar badges, native notifications, and calls that ring even when your browser is closed.")));
 
   // ------------------------------------------------------------ inside the desktop app
   if (shell) {
@@ -117,9 +117,9 @@ export async function renderDesktop(main) {
       auth.user?.role === "admin"
         ? h("div.dl-admin",
           h("p.muted", "Build the installers once and drop them on the server - they show up here straight away:"),
-          h("pre", "cd desktop && npm install\nTICKETS_SERVER_URL=https://your-server npm run dist\ncp dist/Tickets-* ../desktop-builds/"),
+          h("pre", "cd desktop && npm install\nTICKETS_SERVER_URL=https://your-server npm run dist\ncp dist/Grandesk-* ../desktop-builds/"),
           h("p.muted.small", "Or run the “Desktop app” GitHub workflow to build macOS, Windows and Linux in one go. See README › Desktop app."))
-        : h("p.muted", "Your administrator hasn't published it yet. Keep using Tickets in the browser in the meantime.")));
+        : h("p.muted", "Your administrator hasn't published it yet. Keep using Grandesk in the browser in the meantime.")));
     return;
   }
 
@@ -127,7 +127,7 @@ export async function renderDesktop(main) {
   const hero = h("section.card.dl-hero",
     h("img.dl-logo", { src: logoUrl(), alt: "" }),
     h("div.dl-hero-text",
-      h("h2", best ? `Tickets for ${OS[os].name}` : "Tickets for desktop"),
+      h("h2", best ? `Grandesk for ${OS[os].name}` : "Grandesk for desktop"),
       h("p.muted", best ? `Version ${best.version} · ${buildLabel(best)} · ${fmtBytes(best.size)}` : `Version ${data.version} for macOS, Windows and Linux.`),
       h("div.dl-actions",
         best ? h("button.btn.primary.btn-lg", { type: "button", onclick: (e) => download(best, e.currentTarget) }, icon("download", { size: 18 }), `Download for ${OS[os].name}`) : null,
@@ -157,6 +157,6 @@ export async function renderDesktop(main) {
 }
 
 function logoUrl() {
-  const svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><defs><linearGradient id='g' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='#6366f1'/><stop offset='1' stop-color='#4338ca'/></linearGradient></defs><rect width='32' height='32' rx='7.5' fill='url(#g)'/><path d='M9 11h14M9 16h14M9 21h9' stroke='white' stroke-width='2.5' stroke-linecap='round'/></svg>";
+  const svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='#6366f1'/><stop offset='1' stop-color='#a855f7'/></linearGradient></defs><rect width='32' height='32' rx='8' fill='url(#g)'/><path d='M23.5 16a7.5 7.5 0 1 1-2.2-5.3M23.5 16h-7' fill='none' stroke='white' stroke-width='2.8' stroke-linecap='round'/></svg>";
   return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }

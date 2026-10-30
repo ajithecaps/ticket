@@ -91,7 +91,7 @@ export async function renderReports(main) {
           h("td", fmtHours(d.avg_resolution_hours)),
           h(`td${d.overdue_open ? ".overdue" : ""}`, String(d.overdue_open)))))))) : emptyState("No developers", "No one has tickets in this period."),
       h("p.muted.small.note",
-        "Cohort: tickets whose current assignee received them in the selected period, measured as of now. ",
+        "Cohort: tickets each person is currently assigned to, received in the selected period, measured as of now (a shared ticket counts for everyone on it). ",
         "A dash means the metric can't be computed yet; the score re-weights around it. ",
         "Scores reward well-scoped work with generous dates — use the per-developer breakdown before drawing conclusions."));
   }

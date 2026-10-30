@@ -133,11 +133,62 @@ export function avatar(user, size = "") {
   const initials = user.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
   let hash = 0;
   for (const c of user.email || user.name) hash = (hash * 31 + c.charCodeAt(0)) % 360;
-  return h(`span.avatar${size ? "." + size : ""}`, { title: user.name, style: { "--hue": hash } }, initials);
+  const photo = user.avatar_url && h("img", { src: user.avatar_url, alt: "", loading: "lazy", decoding: "async",
+    onerror: (e) => e.target.remove() }); // fall back to the initials underneath
+  return h(`span.avatar${size ? "." + size : ""}${photo ? ".has-photo" : ""}`, { title: user.name, style: { "--hue": hash } }, initials, photo);
 }
 
 export const userChip = (user) =>
   user ? h("span.user-chip", avatar(user, "sm"), h("span", user.name)) : h("span.muted", "Unassigned");
+
+/** Overlapping avatars for everyone on a ticket (the lead first), "+2" when there are more. */
+export function avatarStack(users, size = "sm", max = 3) {
+  const list = (users || []).filter(Boolean);
+  if (list.length <= 1) return avatar(list[0] || null, size);
+  return h("span.avatar-stack", { title: list.map((u) => u.name).join(", ") },
+    list.slice(0, max).map((u) => avatar(u, size)),
+    list.length > max ? h(`span.avatar.more${size ? "." + size : ""}`, `+${list.length - max}`) : null);
+}
+
+/** "Lea Park" for one person, avatars + "Lea +2" for a shared ticket. */
+export function assigneesChip(users) {
+  const list = (users || []).filter(Boolean);
+  if (list.length <= 1) return userChip(list[0] || null);
+  return h("span.user-chip", { title: list.map((u) => u.name).join(", ") },
+    avatarStack(list), h("span", `${list[0].name.split(/\s+/)[0]} +${list.length - 1}`));
+}
+
+/**
+ * Pick several people: chips (the first one is the lead, ★ makes someone else the lead, × removes)
+ * plus a search box to add more. onChange(list) after every change.
+ */
+export function assigneesPicker(lookup, { initial = [], onChange, placeholder = "Add people…", disabled = false } = {}) {
+  let people = [...initial];
+  const chips = h("div.assignee-chips");
+  const changed = () => { paint(); onChange?.(people.slice()); };
+  const paint = () => clear(chips, people.map((u, i) => h(`span.assignee-chip${i === 0 && people.length > 1 ? ".lead" : ""}`,
+    avatar(u, "sm"), h("span.assignee-name", u.name),
+    people.length > 1 && i === 0 ? h("span.lead-tag", { title: "Listed first everywhere" }, "Lead") : null,
+    !disabled && people.length > 1 && i > 0 ? h("button.chip-btn", {
+      type: "button", title: `Make ${u.name} the lead`, "aria-label": `Make ${u.name} the lead`,
+      onclick: () => { people = [u, ...people.filter((x) => x.id !== u.id)]; changed(); },
+    }, "★") : null,
+    !disabled ? h("button.chip-btn", {
+      type: "button", title: `Remove ${u.name}`, "aria-label": `Remove ${u.name}`,
+      onclick: () => { people = people.filter((x) => x.id !== u.id); changed(); },
+    }, "×") : null)));
+  const picker = disabled ? null : userPicker(
+    async (q) => (await lookup(q)).filter((u) => !people.some((p) => p.id === u.id)),
+    (u) => {
+      setTimeout(() => { const i = picker.querySelector("input"); i.value = ""; }, 0);
+      if (!u || people.some((p) => p.id === u.id)) return;
+      people.push(u);
+      changed();
+    },
+    { placeholder: people.length ? placeholder : "Search people…" });
+  paint();
+  return { el: h("div.assignees-picker", chips, picker), get value() { return people.slice(); } };
+}
 
 /** Loading placeholder: shimmering skeleton lines (reads calmer than a spinner). */
 export function spinner(lines = 4) {

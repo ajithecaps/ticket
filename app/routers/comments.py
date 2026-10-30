@@ -53,7 +53,7 @@ def add_comment(ticket_id: int, payload: CommentCreate, user: CurrentUser, db: D
         message=f"{user.name} mentioned you on {ticket.key}: {payload.body[:200]}", ticket=ticket,
     )
     notify(
-        db, {ticket.assignee_id, ticket.reporter_id} - mentioned_ids, actor=user,
+        db, {*ticket.assignee_ids, ticket.reporter_id} - mentioned_ids, actor=user,
         type=NotificationType.COMMENT,
         message=f"{user.name} commented on {ticket.key} {ticket.title}", ticket=ticket,
     )

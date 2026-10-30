@@ -183,7 +183,7 @@ def slack_channels(_admin: AdminUser):
 def slack_test(admin: AdminUser):
     _require_slack()
     try:
-        slack.post(f":wave: Test message from the ticket system, sent by {slack.person(admin.name, admin.email)}.")
+        slack.post(f":wave: Test message from Grandesk, sent by {slack.person(admin.name, admin.email)}.")
     except slack.SlackError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
     return {"sent": True}

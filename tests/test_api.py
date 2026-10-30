@@ -1646,3 +1646,192 @@ def test_daily_challenge(client, admin, world, monkeypatch):
     assert week["rows"][1]["user"]["id"] == kiran["id"] and week["rows"][1]["points"] == 10 and week["rows"][1]["wins"] == 1
     assert client.get(f"{C}/today", headers=asha["headers"]).json()["streak"] == 4
     assert client.get(f"{C}/leaderboard", headers=asha["headers"], params={"period": "year"}).status_code == 422
+
+
+def test_multiple_assignees(client, admin, world):
+    ravi = world["ravi"]
+    lea = make_user(client, admin, "Lea Multi", "lea.multi@example.com")
+    max_ = make_user(client, admin, "Max Multi", "max.multi@example.com")
+    sam = make_user(client, admin, "Sam Multi", "sam.multi@example.com")
+    proj = client.post(f"{API}/projects", headers=admin, json={
+        "name": "Shared work", "key": "SHR", "description": "x", "owner_ids": [ravi["id"]]}).json()
+    for u in (lea, max_, sam):
+        client.post(f"{API}/projects/{proj['id']}/members", headers=ravi["headers"], json={"user_id": u["id"], "role": "developer"})
+
+    # create for two people: lead first, both notified, both see it as theirs
+    t = raise_ticket(client, ravi["headers"], proj["id"], title="Pair on checkout", assignee_ids=[lea["id"], max_["id"]])
+    assert [u["id"] for u in t["assignees"]] == [lea["id"], max_["id"]] and t["assignee"]["id"] == lea["id"]
+    for u in (lea, max_):
+        assert t["id"] in [x["id"] for x in client.get(f"{API}/tickets/my", headers=u["headers"]).json()["items"]]
+        notes = client.get(f"{API}/notifications", headers=u["headers"]).json()["items"]
+        assert any(n["type"] == "assigned" and "shared with Lea, Max" in n["message"] for n in notes)
+    assert client.get(f"{API}/tickets", headers=ravi["headers"], params={"assignee_id": max_["id"]}).json()["total"] == 1
+    # developers can't assign; strangers can't be assigned
+    assert client.post(f"{API}/projects/{proj['id']}/tickets", headers=lea["headers"],
+                       json={"title": "x", "assignee_ids": [lea["id"]]}).status_code == 403
+    assert client.post(f"{API}/tickets/{t['id']}/assign", headers=ravi["headers"],
+                       json={"assignee_ids": [lea["id"], world["zed"]["id"]]}).status_code == 400
+
+    # any assignee (not only the lead) works the ticket
+    set_status(client, max_["headers"], t["id"], "in_progress")
+    assert client.post(f"{API}/tickets/{t['id']}/worklogs", headers=max_["headers"], json={"hours": 2}).status_code == 201
+    detail = client.get(f"{API}/tickets/{t['id']}", headers=max_["headers"]).json()
+    assert detail["can_change_status"] and detail["can_edit"] and not detail["can_assign"]
+
+    # adding a helper keeps the progress; the newcomer is told who else is on it
+    r = client.post(f"{API}/tickets/{t['id']}/assign", headers=ravi["headers"],
+                    json={"assignee_ids": [lea["id"], max_["id"], sam["id"]]}).json()
+    assert r["status"] == "in_progress" and len(r["assignees"]) == 3
+    assert "shared with Lea, Max, Sam" in client.get(f"{API}/notifications", headers=sam["headers"]).json()["items"][0]["message"]
+    # comments reach every assignee
+    client.post(f"{API}/tickets/{t['id']}/comments", headers=ravi["headers"], json={"body": "Looks good"})
+    for u in (lea, max_, sam):
+        assert client.get(f"{API}/notifications", headers=u["headers"]).json()["items"][0]["type"] == "comment"
+
+    # dropping one person (and changing the lead) still keeps progress; the dropped person hears it
+    r = client.post(f"{API}/tickets/{t['id']}/assign", headers=ravi["headers"],
+                    json={"assignee_ids": [max_["id"], sam["id"]]}).json()
+    assert r["status"] == "in_progress" and r["assignee"]["id"] == max_["id"]
+    assert client.get(f"{API}/notifications", headers=lea["headers"]).json()["items"][0]["type"] == "unassigned"
+    assert client.post(f"{API}/tickets/{t['id']}/assign", headers=ravi["headers"],
+                       json={"assignee_ids": [max_["id"], sam["id"]]}).status_code == 400  # nothing changed
+
+    # removing a member from the project takes them off shared tickets only
+    client.delete(f"{API}/projects/{proj['id']}/members/{sam['id']}", headers=ravi["headers"])
+    r = client.get(f"{API}/tickets/{t['id']}", headers=ravi["headers"]).json()
+    assert [u["id"] for u in r["assignees"]] == [max_["id"]] and r["status"] == "in_progress"
+
+    # handing it to someone completely new restarts progress, as before
+    r = client.post(f"{API}/tickets/{t['id']}/assign", headers=ravi["headers"], json={"assignee_ids": [lea["id"]]}).json()
+    assert r["status"] == "todo" and [u["id"] for u in r["assignees"]] == [lea["id"]]
+    # the old single-assignee call still works, and [] unassigns
+    assert assign(client, ravi["headers"], t["id"], max_["id"])["assignees"][0]["id"] == max_["id"]
+    r = client.post(f"{API}/tickets/{t['id']}/assign", headers=ravi["headers"], json={"assignee_ids": []}).json()
+    assert r["assignee"] is None and r["assignees"] == []
+
+    # shared tickets count on everyone's workload and in everyone's efficiency report
+    t2 = raise_ticket(client, ravi["headers"], proj["id"], title="Shared report", assignee_ids=[lea["id"], max_["id"]])
+    set_status(client, lea["headers"], t2["id"], "in_progress")
+    set_status(client, lea["headers"], t2["id"], "done")
+    rep = client.get(f"{API}/reports/efficiency", headers=admin, params={"project_id": proj["id"]}).json()
+    done_by = {row["user"]["id"]: row["completed"] for row in rep["developers"]}
+    assert done_by.get(lea["id"]) == 1 and done_by.get(max_["id"]) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Profiles, photos, the coach, release search
+# --------------------------------------------------------------------------- #
+PNG_1PX = bytes.fromhex(
+    "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+    "1f15c4890000000d49444154789c6360f80f0000010101005b0d0a2d0000000049454e44ae426082"
+)
+
+
+def test_profile_and_photo(client, admin, world):
+    ravi, asha, zed = world["ravi"], world["asha"], world["zed"]
+    me = client.get(f"{API}/profile", headers=asha["headers"]).json()
+    assert me["coach_enabled"] and me["coach_name"] == "Spark" and me["skills"] == [] and me["avatar_url"] is None
+
+    r = client.patch(f"{API}/profile", headers=asha["headers"], json={
+        "name": "  Asha Rao ", "designation": "Backend dev", "bio": "Payments.", "phone": " ", "location": "Kochi",
+        "timezone": "Asia/Kolkata", "skills": ["Python", "python", " SQL "], "coach_name": "Buddy", "coach_tone": "witty",
+        "daily_goal": 4,
+    }).json()
+    assert r["name"] == "Asha Rao" and r["phone"] is None and r["skills"] == ["Python", "SQL"]
+    assert (r["coach_name"], r["coach_tone"], r["daily_goal"]) == ("Buddy", "witty", 4)
+    assert client.patch(f"{API}/profile", headers=asha["headers"], json={"timezone": "Mars/Base"}).status_code == 422
+    assert client.patch(f"{API}/profile", headers=asha["headers"], json={"coach_tone": "rude"}).status_code == 422
+    assert client.patch(f"{API}/profile", headers=asha["headers"], json={"name": None}).status_code == 422
+
+    # photos: real images only, served publicly by an unguessable key that changes on every upload
+    bad = client.put(f"{API}/profile/avatar", headers=asha["headers"], files={"file": ("x.svg", b"<svg onload=alert(1)>", "image/svg+xml")})
+    assert bad.status_code == 400
+    up = client.put(f"{API}/profile/avatar", headers=asha["headers"], files={"file": ("a.png", PNG_1PX, "image/png")}).json()
+    url = up["avatar_url"]
+    img = client.get(url)
+    assert img.status_code == 200 and img.headers["content-type"] == "image/png" and img.content == PNG_1PX
+    again = client.put(f"{API}/profile/avatar", headers=asha["headers"], files={"file": ("a.png", PNG_1PX, "image/png")}).json()
+    assert again["avatar_url"] != url and client.get(url).status_code == 404
+    # the photo travels with the person everywhere they appear
+    assert client.get(f"{API}/auth/me", headers=asha["headers"]).json()["avatar_url"] == again["avatar_url"]
+    looked = client.get(f"{API}/users/lookup", headers=ravi["headers"], params={"q": "Asha"}).json()
+    assert looked[0]["avatar_url"] == again["avatar_url"]
+    assert client.delete(f"{API}/profile/avatar", headers=asha["headers"]).json()["avatar_url"] is None
+
+    # teammates see the profile (not the coach settings); people without a shared project don't
+    seen = client.get(f"{API}/people/{asha['id']}", headers=ravi["headers"]).json()
+    assert seen["bio"] == "Payments." and seen["skills"] == ["Python", "SQL"] and seen["coach_name"] == "Spark"
+    assert "PAY" in [p["key"] for p in seen["shared_projects"]] and "open" in seen["stats"]
+    assert client.get(f"{API}/people/{asha['id']}", headers=zed["headers"]).status_code == 404
+    assert client.get(f"{API}/people/{asha['id']}", headers=admin).status_code == 200
+    assert client.get(f"{API}/people/{asha['id']}", headers=asha["headers"]).json()["coach_name"] == "Buddy"
+
+
+def test_coach_suggests_and_cheers(client, admin, world):
+    ravi = world["ravi"]
+    dev = make_user(client, admin, "Coach Dev", "coach.dev@example.com")
+    proj = client.post(f"{API}/projects", headers=admin, json={"name": "Coached", "key": "CCH", "owner_ids": [ravi["id"]]}).json()
+    client.post(f"{API}/projects/{proj['id']}/members", headers=ravi["headers"], json={"user_id": dev["id"], "role": "developer"})
+
+    empty = client.get(f"{API}/coach", headers=dev["headers"]).json()
+    assert empty["mood"] == "empty" and empty["queue"] == [] and empty["stats"]["open"] == 0
+
+    low = raise_ticket(client, ravi["headers"], proj["id"], title="Someday", priority="low", assignee_id=dev["id"])
+    late = raise_ticket(client, ravi["headers"], proj["id"], title="Late one", priority="medium", assignee_id=dev["id"])
+    client.patch(f"{API}/tickets/{late['id']}", headers=ravi["headers"], json={"due_date": iso(days=-2)})
+    hot = raise_ticket(client, ravi["headers"], proj["id"], title="Hot", priority="critical", assignee_id=dev["id"])
+    blocked = raise_ticket(client, ravi["headers"], proj["id"], title="Stuck", priority="critical", assignee_id=dev["id"])
+    set_status(client, dev["headers"], blocked["id"], "blocked")
+
+    c = client.get(f"{API}/coach", headers=dev["headers"]).json()
+    keys = [q["ticket"]["key"] for q in c["queue"]]
+    assert keys[0] == late["key"] and keys[1] == hot["key"] and keys[-1] == blocked["key"] and low["key"] in keys
+    assert c["queue"][0]["reasons"][0].startswith("Overdue") and c["queue"][0]["action"] == "start"
+    assert c["queue"][-1]["action"] == "unblock" and c["mood"] == "overdue" and late["key"] in c["message"]
+    assert {n["kind"] for n in c["nudges"]} >= {"overdue", "blocked"}
+    assert c["stats"]["overdue"] == 1 and c["stats"]["blocked"] == 1 and c["stats"]["done_today"] == 0
+
+    # work in progress outranks fresh work of the same urgency
+    set_status(client, dev["headers"], low["id"], "in_progress")
+    c = client.get(f"{API}/coach", headers=dev["headers"]).json()
+    assert [q for q in c["queue"] if q["ticket"]["key"] == low["key"]][0]["action"] == "continue"
+
+    # finishing work counts towards the goal and the streak, and the coach cheers
+    client.patch(f"{API}/profile", headers=dev["headers"], json={"daily_goal": 2, "coach_tone": "coach"})
+    set_status(client, dev["headers"], late["id"], "in_progress")
+    set_status(client, dev["headers"], late["id"], "done")
+    c = client.get(f"{API}/coach", headers=dev["headers"], params={"event": "done", "key": late["key"]}).json()
+    assert c["stats"]["done_today"] == 1 and c["stats"]["streak"] == 1 and c["mood"] == "started"
+    assert late["key"] in c["cheer"] and "1 more for today's goal" in c["cheer"]
+    set_status(client, dev["headers"], hot["id"], "in_progress")
+    set_status(client, dev["headers"], hot["id"], "done")
+    c = client.get(f"{API}/coach", headers=dev["headers"], params={"event": "done", "key": hot["key"]}).json()
+    assert c["mood"] == "goal" and "Daily goal reached" in c["cheer"] and c["stats"]["done_week"] == 2
+
+    client.patch(f"{API}/profile", headers=dev["headers"], json={"coach_enabled": False})
+    assert client.get(f"{API}/coach", headers=dev["headers"]).json()["enabled"] is False
+
+
+def test_release_search(client, admin, world):
+    ravi, asha, zed = world["ravi"], world["asha"], world["zed"]
+    pay = world["pay"]
+    t1 = raise_ticket(client, ravi["headers"], pay["id"], title="Refund webhook retries", assignee_id=asha["id"])
+    t2 = raise_ticket(client, ravi["headers"], pay["id"], title="Receipt PDF", assignee_id=asha["id"])
+    for t in (t1, t2):
+        set_status(client, asha["headers"], t["id"], "in_progress")
+        set_status(client, asha["headers"], t["id"], "done")
+    v1 = client.post(f"{API}/projects/{pay['id']}/releases", headers=ravi["headers"], json={"name": "v9.1.0"}).json()
+    v2 = client.post(f"{API}/projects/{pay['id']}/releases", headers=ravi["headers"], json={"name": "v9.2.0"}).json()
+    client.post(f"{API}/releases/{v1['id']}/tickets", headers=ravi["headers"], json={"ticket_ids": [t1["id"]]})
+    client.post(f"{API}/releases/{v2['id']}/tickets", headers=ravi["headers"], json={"ticket_ids": [t2["id"]]})
+    client.post(f"{API}/releases/{v1['id']}/release", headers=ravi["headers"])
+
+    find = lambda h, **p: {r["name"]: r for r in client.get(f"{API}/releases", headers=h, params=p).json()}
+    assert set(find(asha["headers"], q="v9.")) == {"v9.1.0", "v9.2.0"}
+    by_title = find(asha["headers"], q="webhook")
+    assert set(by_title) == {"v9.1.0"} and by_title["v9.1.0"]["matched_tickets"] == [t1["key"]]
+    by_key = find(asha["headers"], q=t2["key"].lower())
+    assert set(by_key) == {"v9.2.0"} and by_key["v9.2.0"]["matched_tickets"] == [t2["key"]]
+    assert set(find(asha["headers"], q="v9.", status="released")) == {"v9.1.0"}
+    assert find(asha["headers"], q="v9.")["v9.1.0"]["matched_tickets"] == []  # matched by name only
+    assert find(zed["headers"], q="v9.") == {}  # not a member of PAY

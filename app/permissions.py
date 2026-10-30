@@ -73,7 +73,7 @@ def get_ticket_for_user(db: Session, ticket_id: int, user: User) -> Ticket:
 
 def ticket_permissions(db: Session, user: User, ticket: Ticket) -> dict[str, bool]:
     owner = is_project_owner(db, user, ticket.project_id)
-    assignee = ticket.assignee_id == user.id
+    assignee = user.id in ticket.assignee_ids
     reporter = ticket.reporter_id == user.id
     return {
         "owner": owner,

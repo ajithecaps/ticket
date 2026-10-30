@@ -9,8 +9,9 @@ import { currentQuery, setQuery } from "../app.js";
 import { sprintChip } from "./sprints.js";
 import {
   PRIORITIES, STATUSES, TYPES, avatar, busy, clear, confirmDialog, emptyState, errorBox, fmtDate, fmtDateTime, h,
-  label, modal, priorityBadge, select, spinner, statusBadge, timeAgo, toast, typeBadge, userChip, userPicker,
+  label, modal, priorityBadge, select, spinner, statusBadge, timeAgo, toast, typeBadge, userChip, userPicker, assigneesChip,
 } from "../ui.js";
+import { cheerIfMine } from "./coach.js";
 
 export function ticketTable(tickets, { showProject = true } = {}) {
   if (!tickets.length) return emptyState("No tickets", "Nothing matches these filters.");
@@ -26,7 +27,7 @@ export function ticketTable(tickets, { showProject = true } = {}) {
         h("td", h("div.row", statusBadge(t.status),
           t.release && h("a.badge.rel-chip", { href: `#/releases/${t.release.id}`, title: `In release ${t.release.name}` }, [icon("rocket", { size: 12 }), ` ${t.release.name}`]))),
         h("td.hide-sm", priorityBadge(t.priority)),
-        h("td.hide-sm", userChip(t.assignee)),
+        h("td.hide-sm", assigneesChip(t.assignees)),
         h(`td.nowrap${t.is_overdue ? ".overdue" : ""}`, t.due_date ? fmtDate(t.due_date) : h("span.muted", "—")),
         h("td.hide-md.muted", timeAgo(t.updated_at)),
       ))),
@@ -49,7 +50,7 @@ const COLUMNS = [
   { id: "type", name: "Type", cell: (t) => typeBadge(t.type), csv: (t) => t.type },
   { id: "status", name: "Status", sort: "status", cell: (t, ctx) => ctx.statusCell(t), csv: (t) => t.status },
   { id: "priority", name: "Priority", sort: "priority", cell: (t) => priorityBadge(t.priority), csv: (t) => t.priority },
-  { id: "assignee", name: "Assignee", sort: "assignee", cell: (t) => userChip(t.assignee), csv: (t) => t.assignee?.name || "" },
+  { id: "assignee", name: "Assignee", sort: "assignee", cell: (t) => assigneesChip(t.assignees), csv: (t) => t.assignees.map((u) => u.name).join("; ") },
   { id: "reporter", name: "Reporter", cell: (t) => userChip(t.reporter), csv: (t) => t.reporter?.name || "" },
   { id: "start", name: "Start", sort: "start_date", cell: (t) => (t.start_date ? shortDate(t.start_date) : h("span.muted", "—")), csv: (t) => t.start_date || "" },
   {
@@ -320,6 +321,7 @@ export function filteredTicketList(opts) {
           try {
             await api.post(`/tickets/${t.id}/status`, { status: s });
             toast(`${t.key} → ${label(s)}`);
+            cheerIfMine(t, s);
             load();
           } catch (err) { toast(err.message, "error"); }
         },

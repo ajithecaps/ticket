@@ -8,6 +8,7 @@ from sqlalchemy import and_, case, func, not_, or_, select
 
 from ..deps import CurrentUser, DbSession
 from ..models import (
+    assigned_to,
     Sprint,
     SprintStatus,
     ProjectRole,
@@ -58,7 +59,7 @@ from ..services import (
     next_ticket_number,
     notify,
     remove_ticket_files,
-    reset_for_new_assignee,
+    set_assignees,
 )
 from ..utils import ensure_utc, escape_like, paginate, utcnow
 
@@ -143,7 +144,7 @@ def _apply_filters(stmt, f: TicketFilters):
     if f.ticket_type:
         stmt = stmt.where(Ticket.type.in_(f.ticket_type))
     if f.assignee_id is not None:
-        stmt = stmt.where(Ticket.assignee_id == f.assignee_id)
+        stmt = stmt.where(assigned_to(f.assignee_id))
     if f.reporter_id is not None:
         stmt = stmt.where(Ticket.reporter_id == f.reporter_id)
     if f.unassigned is True:
@@ -313,7 +314,7 @@ def my_tickets(
     project_id: int | None = Query(None, description="Leave empty for all projects"),
 ):
     # _visible() matters: a finished ticket stays assigned to someone who has since left the project.
-    stmt = _visible(user).where(Ticket.assignee_id == user.id)
+    stmt = _visible(user).where(assigned_to(user.id))
     if project_id is not None:
         stmt = stmt.where(Ticket.project_id == project_id)
     f.assignee_id = None  # already restricted to me
@@ -323,7 +324,7 @@ def my_tickets(
 @router.get("/tickets/my/summary", response_model=MyTicketSummary, summary="My assigned work grouped by project")
 def my_ticket_summary(user: CurrentUser, db: DbSession):
     now = utcnow()
-    mine = [Ticket.assignee_id == user.id]
+    mine = [assigned_to(user.id)]
     if not is_admin(user):  # same rule as _visible(): only projects I still belong to
         mine.append(
             Ticket.project_id.in_(
@@ -426,10 +427,12 @@ def create_ticket(project_id: int, payload: TicketCreate, user: CurrentUser, db:
         if not owner:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Only project owners can plan tickets into a sprint")
         _check_sprint(db, project_id, payload.sprint_id)
-    if payload.assignee_id is not None:
+    assignee_ids = _wanted_assignees(payload.assignee_ids, payload.assignee_id)
+    if assignee_ids:
         if not owner:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Only project owners can assign tickets")
-        ensure_assignable(db, project_id, payload.assignee_id)
+        for uid in assignee_ids:
+            ensure_assignable(db, project_id, uid)
 
     ticket = Ticket(
         project_id=project_id,
@@ -439,8 +442,6 @@ def create_ticket(project_id: int, payload: TicketCreate, user: CurrentUser, db:
         priority=payload.priority,
         type=payload.type,
         reporter_id=user.id,
-        assignee_id=payload.assignee_id,
-        assigned_at=utcnow() if payload.assignee_id else None,
         start_date=ensure_utc(payload.start_date),
         due_date=ensure_utc(payload.due_date),
         sprint_id=payload.sprint_id,
@@ -448,22 +449,24 @@ def create_ticket(project_id: int, payload: TicketCreate, user: CurrentUser, db:
     )
     db.add(ticket)
     db.flush()
+    set_assignees(ticket, assignee_ids)
     log_activity(db, ticket, user, "created")
 
-    # In-app: the assignee hears they were assigned; every project owner hears a ticket was created.
+    # In-app: the assignees hear they were assigned; every project owner hears a ticket was created.
     # Slack: one "created" message covering both (the assigned one is not posted separately).
-    if payload.assignee_id:
-        log_activity(db, ticket, user, "assigned", "assignee", None, payload.assignee_id)
+    for uid in assignee_ids:
+        log_activity(db, ticket, user, "assigned", "assignee", None, uid)
+    if assignee_ids:
         notify(
-            db, [payload.assignee_id], actor=user, type=NotificationType.ASSIGNED,
-            message=f"{user.name} assigned you {_label(ticket)}", ticket=ticket, slack=False,
+            db, assignee_ids, actor=user, type=NotificationType.ASSIGNED,
+            message=f"{user.name} assigned you {_label(ticket)}{_with_others(db, assignee_ids)}", ticket=ticket, slack=False,
         )
-    assignee_name = db.get(User, payload.assignee_id).name if payload.assignee_id else "unassigned"
-    details = [ticket.type.value, f"{ticket.priority.value} priority", f"assignee: {assignee_name}"]
+    names = ", ".join(db.get(User, uid).name for uid in assignee_ids) or "unassigned"
+    details = [ticket.type.value, f"{ticket.priority.value} priority", f"assignee{'s' if len(assignee_ids) > 1 else ''}: {names}"]
     if ticket.due_date:
         details.append(f"due {ticket.due_date:%d %b %Y}")
     notify(
-        db, [*project_owner_ids(db, project_id), payload.assignee_id], actor=user, type=NotificationType.TICKET_CREATED,
+        db, [*project_owner_ids(db, project_id), *assignee_ids], actor=user, type=NotificationType.TICKET_CREATED,
         message=f"{user.name} created {_label(ticket)} ({', '.join(details)})", ticket=ticket,
     )
     db.commit()
@@ -533,7 +536,7 @@ def update_ticket(ticket_id: int, payload: TicketUpdate, user: CurrentUser, db: 
 
     if changed:
         # Assignee and reporter always; owners too when someone else (developer/reporter) made the edit.
-        recipients = [ticket.assignee_id, ticket.reporter_id]
+        recipients = [*ticket.assignee_ids, ticket.reporter_id]
         if not perms["owner"]:
             recipients += project_owner_ids(db, ticket.project_id)
         notify(
@@ -545,41 +548,71 @@ def update_ticket(ticket_id: int, payload: TicketUpdate, user: CurrentUser, db: 
     return _detail(db, user, ticket)
 
 
-@router.post("/tickets/{ticket_id}/assign", response_model=TicketDetail, summary="Assign / reassign / unassign (owners)")
+@router.post("/tickets/{ticket_id}/assign", response_model=TicketDetail, summary="Set who works on a ticket (owners)")
 def assign_ticket(ticket_id: int, payload: AssignIn, user: CurrentUser, db: DbSession):
-    """Reassigning resets progress tracking (status back to *todo*, start time cleared) so the new assignee
-    is not credited for earlier work. A finished ticket must be reopened before it can be reassigned."""
+    """Send `assignee_ids` (everyone, the lead first) or a single `assignee_id`.
+
+    Adding or removing helpers keeps the ticket's progress. When the work changes hands completely
+    (all assignees replaced) progress tracking restarts - status back to *todo*, start time cleared - so
+    the new people are not credited with earlier work. A finished ticket must be reopened first."""
     ticket = get_ticket_for_user(db, ticket_id, user)
     if not ticket_permissions(db, user, ticket)["can_assign"]:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only project owners can assign tickets")
     if ticket.status in CLOSED_STATUSES:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Reopen the ticket before reassigning it")
 
-    new_id, old_id = payload.assignee_id, ticket.assignee_id
-    if new_id == old_id:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Ticket is already assigned to this user")
-    if new_id is not None:
-        ensure_assignable(db, ticket.project_id, new_id)
+    sent = payload.model_fields_set
+    if "assignee_ids" in sent and payload.assignee_ids is not None:
+        wanted = _wanted_assignees(payload.assignee_ids, None)
+    else:
+        wanted = _wanted_assignees(None, payload.assignee_id)
+    if wanted == ticket.assignee_ids:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Ticket is already assigned to this user" if len(wanted) == 1 else "Nothing changed")
+    for uid in wanted:
+        if uid not in ticket.assignee_ids:
+            ensure_assignable(db, ticket.project_id, uid)
 
     old_status = ticket.status
-    reset_for_new_assignee(ticket, new_id)
-    log_activity(db, ticket, user, "assigned" if new_id else "unassigned", "assignee", old_id, new_id)
+    old_lead = ticket.assignee_id
+    added, removed = set_assignees(ticket, wanted)
+    for uid in added:
+        log_activity(db, ticket, user, "assigned", "assignee", None, uid)
+    for uid in removed:
+        log_activity(db, ticket, user, "unassigned", "assignee", uid, None)
+    if ticket.assignee_id != old_lead and ticket.assignee_id is not None and old_lead in wanted:
+        log_activity(db, ticket, user, "lead_changed", "assignee", old_lead, ticket.assignee_id)
     if old_status != ticket.status:
         log_activity(db, ticket, user, "updated", "status", old_status, ticket.status)
 
-    if new_id:
+    if added:
         notify(
-            db, [new_id], actor=user, type=NotificationType.ASSIGNED,
-            message=f"{user.name} assigned you {_label(ticket)}", ticket=ticket,
+            db, added, actor=user, type=NotificationType.ASSIGNED,
+            message=f"{user.name} assigned you {_label(ticket)}{_with_others(db, wanted)}", ticket=ticket,
         )
-    if old_id:
+    if removed:
         notify(
-            db, [old_id], actor=user, type=NotificationType.UNASSIGNED,
+            db, removed, actor=user, type=NotificationType.UNASSIGNED,
             message=f"{_label(ticket)} was taken off you by {user.name}", ticket=ticket,
         )
     db.commit()
     db.refresh(ticket)
     return _detail(db, user, ticket)
+
+
+def _wanted_assignees(ids: list[int] | None, single: int | None) -> list[int]:
+    if ids is not None:
+        return list(dict.fromkeys(ids))
+    return [single] if single is not None else []
+
+
+def _with_others(db, ids: list[int]) -> str:
+    """' (shared with Ravi, Neha)' on notifications about a ticket several people work on."""
+    if len(ids) < 2:
+        return ""
+    names = [db.get(User, uid).name.split()[0] for uid in ids]
+    return f" (shared with {', '.join(names)})"
 
 
 @router.post("/tickets/{ticket_id}/status", response_model=TicketDetail, summary="Change status (assignee / owners)")
@@ -620,7 +653,7 @@ def change_status(ticket_id: int, payload: StatusChange, user: CurrentUser, db: 
     apply_status_change(ticket, new)
     log_activity(db, ticket, user, "status_changed", "status", old, new)
 
-    recipients = [ticket.reporter_id, ticket.assignee_id]
+    recipients = [ticket.reporter_id, *ticket.assignee_ids]
     if new in (TicketStatus.BLOCKED, TicketStatus.IN_REVIEW, TicketStatus.DONE) or old in CLOSED_STATUSES:
         recipients += project_owner_ids(db, ticket.project_id)
     if new == TicketStatus.DONE:

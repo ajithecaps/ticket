@@ -10,7 +10,7 @@ function render() {
   if (!list.length) {
     const p = document.createElement("p");
     p.className = "empty";
-    p.textContent = kind === "screen" ? "No screens found." : "No windows found. On macOS, allow Screen Recording for Tickets in System Settings › Privacy & Security.";
+    p.textContent = kind === "screen" ? "No screens found." : "No windows found. On macOS, allow Screen Recording for Grandesk in System Settings › Privacy & Security.";
     grid.append(p);
   }
   for (const s of list) {

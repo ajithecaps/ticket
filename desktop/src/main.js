@@ -1,4 +1,4 @@
-// Tickets desktop app: a thin, secure shell around the web app on your server, plus the things a
+// Grandesk desktop app: a thin, secure shell around the web app on your server, plus the things a
 // browser tab can't do well - dock/taskbar badge, staying alive in the tray, screen-share picker,
 // native notifications that bring the window back, and update checks.
 const {
@@ -69,7 +69,7 @@ function createWindow() {
     minWidth: 880,
     minHeight: 560,
     show: false,
-    title: "Tickets",
+    title: "Grandesk",
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#0f1218" : "#ffffff",
     autoHideMenuBar: !isMac,
     icon: isMac ? undefined : path.join(ASSETS, "icon.png"),
@@ -105,7 +105,7 @@ function createWindow() {
       win.hide();
       if (!trayHintShown && Notification.isSupported()) {
         trayHintShown = true;
-        new Notification({ title: "Tickets is still running", body: "You'll still get messages and calls. Quit from the tray icon." }).show();
+        new Notification({ title: "Grandesk is still running", body: "You'll still get messages and calls. Quit from the tray icon." }).show();
       }
     }
   });
@@ -291,7 +291,7 @@ function setBadge(count, dot) {
   if (isMac) app.dock.setBadge(label);
   else if (isWin) win?.setOverlayIcon(label ? redDot() : null, label ? `${label} unread` : "");
   else app.setBadgeCount(n);
-  tray?.setToolTip(label ? `Tickets - ${n ? `${label} unread` : "new messages"}` : "Tickets");
+  tray?.setToolTip(label ? `Grandesk - ${n ? `${label} unread` : "new messages"}` : "Grandesk");
 }
 
 function requestAttention(urgent) {
@@ -304,11 +304,11 @@ function createTray() {
   if (isMac) return; // the dock does this job on macOS
   try {
     tray = new Tray(nativeImage.createFromPath(path.join(ASSETS, isWin ? "tray.png" : "tray-linux.png")));
-    tray.setToolTip("Tickets");
+    tray.setToolTip("Grandesk");
     tray.setContextMenu(Menu.buildFromTemplate([
-      { label: "Open Tickets", click: showWindow },
+      { label: "Open Grandesk", click: showWindow },
       { type: "separator" },
-      { label: "Quit Tickets", click: () => { quitting = true; app.quit(); } },
+      { label: "Quit Grandesk", click: () => { quitting = true; app.quit(); } },
     ]));
     tray.on("click", showWindow);
   } catch (err) {
@@ -340,7 +340,7 @@ function scheduleUpdateCheck() {
       const latest = await latestVersion();
       if (latest && newer(latest, app.getVersion()) && updateNotified !== latest && Notification.isSupported()) {
         updateNotified = latest;
-        const n = new Notification({ title: "A new version of Tickets is available", body: `Version ${latest} is ready. Click to download it.` });
+        const n = new Notification({ title: "A new version of Grandesk is available", body: `Version ${latest} is ready. Click to download it.` });
         n.on("click", () => { showWindow(); openHome("#/desktop"); });
         n.show();
       }
@@ -355,11 +355,11 @@ async function checkForUpdatesNow() {
     if (latest && newer(latest, app.getVersion())) {
       const { response } = await dialog.showMessageBox(win, {
         type: "info", buttons: ["Download", "Later"], defaultId: 0,
-        message: `Tickets ${latest} is available`, detail: `You have version ${app.getVersion()}.`,
+        message: `Grandesk ${latest} is available`, detail: `You have version ${app.getVersion()}.`,
       });
       if (response === 0) { showWindow(); openHome("#/desktop"); }
     } else {
-      dialog.showMessageBox(win, { type: "info", message: "You're up to date", detail: `Tickets ${app.getVersion()} is the newest version.` });
+      dialog.showMessageBox(win, { type: "info", message: "You're up to date", detail: `Grandesk ${app.getVersion()} is the newest version.` });
     }
   } catch (err) {
     dialog.showMessageBox(win, { type: "warning", message: "Could not check for updates", detail: err.message });
@@ -423,7 +423,7 @@ ipcMain.handle("app:connect", async (e, input) => {
     if (!res.ok) throw new Error();
     await res.json();
   } catch {
-    return { ok: false, error: `No Tickets server answered at ${url}. Check the address (it's the one you open in your browser).` };
+    return { ok: false, error: `No Grandesk server answered at ${url}. Check the address (it's the one you open in your browser).` };
   }
   settings.serverUrl = url;
   saveSettings();

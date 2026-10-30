@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 
 from ..deps import AdminUser, CurrentUser, DbSession
 from ..models import (
+    assigned_to,
     CLOSED_STATUSES,
     NotificationType,
     Project,
@@ -29,7 +30,7 @@ from ..schemas import (
     ProjectOut,
     ProjectUpdate,
 )
-from ..services import log_activity, notify, reset_for_new_assignee
+from ..services import log_activity, notify, set_assignees
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
@@ -262,13 +263,14 @@ def remove_member(project_id: int, user_id: int, user: CurrentUser, db: DbSessio
     open_tickets = db.scalars(
         select(Ticket).where(
             Ticket.project_id == project_id,
-            Ticket.assignee_id == user_id,
+            assigned_to(user_id),
             Ticket.status.not_in(CLOSED_STATUSES),
         )
     ).unique().all()
     for ticket in open_tickets:
+        # Shared tickets just lose this person (the others carry on); solo tickets become unassigned.
         log_activity(db, ticket, user, "unassigned", "assignee", user_id, None)
-        reset_for_new_assignee(ticket, None)
+        set_assignees(ticket, [uid for uid in ticket.assignee_ids if uid != user_id])
 
     db.delete(member)
     db.commit()

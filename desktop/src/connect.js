@@ -5,7 +5,7 @@ const showError = (text) => { $("error").textContent = text; $("error").hidden =
 $("server").value = q.get("server") || "";
 if (q.get("error")) {
   $("title").textContent = "Can't connect";
-  $("lead").textContent = "The app couldn't load your Tickets server.";
+  $("lead").textContent = "The app couldn't load your Grandesk server.";
   showError(q.get("error"));
   if (q.get("server")) $("retry").hidden = false;
 }

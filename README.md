@@ -1,8 +1,11 @@
-# Developer Ticket System
+# Grandesk
 
-FastAPI backend for a dev-team ticket tracker: multiple projects, project owners who assign work,
-developers who work their queue across projects, and an admin who sees everything plus per-developer
-efficiency.
+Grandesk is a work hub for development teams. It runs on a FastAPI backend and covers:
+
+- multiple projects
+- project owners who assign work
+- developers who work their queue across projects
+- an admin who sees everything, plus per-developer efficiency
 
 ## Roles
 
@@ -116,6 +119,72 @@ Filters on every list: `status`, `priority`, `type` (repeatable), `assignee_id`,
 
 **Reports** (admin) `GET /reports/overview` · `GET /reports/efficiency` ·
 `GET /reports/efficiency/{user_id}`
+
+### Profiles
+
+Everyone sets up their own profile from **account menu › Your profile** (`#/profile`):
+
+- **Details:** photo, name, title, bio, skills, phone, location and time zone.
+- **Photo:** the browser crops it to a square and shrinks it before uploading. PNG, JPEG, WebP and GIF are accepted, up to 1 MB. SVG is refused.
+- **Where it shows:** the photo replaces the initials everywhere the person appears.
+
+Teammates open a profile (`#/people/<id>`) from the People and Members lists or from a ticket's reporter. It shows:
+
+- the person's contact details and current local time
+- open and in-progress tickets, tickets finished in the last 30 days, and their streak
+- the projects you share, plus **Message** and **Their tickets** buttons
+
+Only people who share a project can see each other's profile; admins can see everyone's.
+
+Photos are served from `/api/v1/avatars/<key>` without a login, because an `<img>` tag can't send the token. The key is random and changes with every upload, so photos can't be guessed.
+
+### Your coach
+
+Every person has a personal coach, called **Spark** unless they rename it. It is a small rule-based agent: it reads that person's open tickets and works out what to do next. Its data comes from `GET /api/v1/coach`.
+
+How it ranks the next task:
+
+1. **Due date:** overdue first, then due today, tomorrow, within 3 days, then within a week.
+2. **Priority:** critical, then high.
+3. **Status and sprint:** work already in progress comes before starting something new, and tickets in the active sprint get a boost.
+4. **Waiting work sinks:** blocked and in-review tickets go to the bottom, because they wait on someone else.
+
+Each suggestion lists its reasons (for example "Overdue by 1 day · Critical priority"). From the coach you can act on it:
+
+- **Start it** moves the ticket to In progress.
+- **Not now** puts it off until tomorrow. This is remembered in your browser only.
+
+Where the coach appears:
+
+- **Top bar:** a progress ring for today's goal. Click it to open the coach panel.
+- **Panel:** the next task with buttons, the two or three tickets after it, and heads-up notes about overdue, blocked or stalled tickets (no update for 3 days) or too much work in progress.
+- **Dashboard:** a coach card, plus a greeting the first time you open Grandesk each day.
+- **When you finish a ticket:** a cheer with confetti and the number left for today's goal.
+
+The day is counted in your profile's time zone. Your streak counts the days in a row on which you finished at least one ticket.
+
+You set up the coach in the profile:
+
+- turn it on or off
+- its name
+- your daily goal (default 2)
+- its tone: Cheerful, Calm, Tough coach or Witty
+
+Those settings are private; teammates don't see them.
+
+### Finding tickets in releases
+
+- **Releases page:** filter by Planned or Released and by project. The search box matches a release name, and also a ticket key or title inside a release, so typing `PAY-12` finds which release shipped it. The card then says "Contains PAY-12", and opening it shows that ticket already filtered.
+- **Inside a release:** filter the ticket list by key or title, type, status (Done or Verified) and assignee.
+
+### Several people on one ticket
+
+Owners can assign a ticket to **one or more people**, from the new-ticket form or from the ticket's Assignees field (search and add, × to remove, ★ to make someone the lead).
+- **The lead** is listed first everywhere and is what the list sorts by.
+- **Shared access:** every assignee sees the ticket in "My tickets", gets its notifications (assigned, comments, status, overdue), can move its status and log time, and appears with it on the board, timeline, workload and Slack summaries.
+- **Reports:** a shared ticket counts in each assignee's efficiency report.
+- **Progress:** adding or removing helpers keeps the ticket's progress. Progress tracking restarts only when the ticket passes to entirely new people, or to nobody.
+- **API:** `POST /tickets/{id}/assign` takes `{"assignee_ids": [lead, ...]}`. `{"assignee_id": n}` still works for one person. Tickets return `assignees` (everyone) next to `assignee` (the lead).
 
 ### Ticket keys and status flow
 
@@ -491,7 +560,7 @@ proxy_set_header Connection "upgrade";`).
 **Ringtones.** Chat settings › Call ringtone offers Aurora (default), Sunrise, Breeze, Classic phone, or Silent, each with a preview. They are synthesised in the browser (no audio files) and start softly, growing a little louder until you answer.
 ## Desktop app
 
-People can install Tickets as a desktop app for **macOS, Windows and Linux**. After signing in on the web, they open
+People can install Grandesk as a desktop app for **macOS, Windows and Linux**. After signing in on the web, they open
 **account menu › Get the desktop app** (or `#/desktop`). The page picks the right installer for their computer, including Apple silicon vs Intel. Download links only work for signed-in people and expire after 10 minutes.
 
 What the app adds over a browser tab:
@@ -517,7 +586,7 @@ TICKETS_SERVER_URL=https://tickets.example.com npm run dist:linux  # .AppImage +
 
 The simplest route is the **Desktop app** GitHub workflow (Actions › Desktop app › Run workflow). It builds all three platforms; you then download the artifacts.
 
-**Publish them:** copy the files from `desktop/dist/` (`Tickets-<version>-*.dmg / .exe / .AppImage / .deb`) into `desktop-builds/` next to `docker-compose.yml`. That folder is mounted into the container (`DESKTOP_DIR`). The page offers the newest version found there and needs no restart. To release an update, bump `"version"` in `desktop/package.json`, rebuild and copy the new files in. Running apps will announce it.
+**Publish them:** copy the files from `desktop/dist/` (`Grandesk-<version>-*.dmg / .exe / .AppImage / .deb`) into `desktop-builds/` next to `docker-compose.yml`. That folder is mounted into the container (`DESKTOP_DIR`). The page offers the newest version found there and needs no restart. To release an update, bump `"version"` in `desktop/package.json`, rebuild and copy the new files in. Running apps will announce it.
 
 **Signing:** builds are unsigned unless you add certificates, so people see a one-time warning.
 - macOS: right-click the app › Open (the Mac build is ad-hoc signed, so it never says "damaged").

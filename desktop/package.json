@@ -1,8 +1,8 @@
 {
-  "name": "tickets-desktop",
-  "productName": "Tickets",
-  "version": "1.0.0",
-  "description": "Desktop app for the Developer Ticket System",
+  "name": "grandesk-desktop",
+  "productName": "Grandesk",
+  "version": "1.1.0",
+  "description": "Grandesk desktop app",
   "main": "src/main.js",
   "author": "Grandway",
   "license": "UNLICENSED",
@@ -22,8 +22,8 @@
   "homepage": "https://grandway.tech",
   "build": {
     "appId": "tech.grandway.tickets",
-    "productName": "Tickets",
-    "artifactName": "Tickets-${version}-${os}-${arch}.${ext}",
+    "productName": "Grandesk",
+    "artifactName": "Grandesk-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -54,12 +54,12 @@
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "Tickets uses the microphone for audio and video calls.",
-        "NSCameraUsageDescription": "Tickets uses the camera for video calls."
+        "NSMicrophoneUsageDescription": "Grandesk uses the microphone for audio and video calls.",
+        "NSCameraUsageDescription": "Grandesk uses the camera for video calls."
       }
     },
     "dmg": {
-      "artifactName": "Tickets-${version}-mac-${arch}.${ext}"
+      "artifactName": "Grandesk-${version}-mac-${arch}.${ext}"
     },
     "win": {
       "target": [
@@ -76,7 +76,7 @@
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "Tickets-${version}-windows-${arch}-setup.${ext}"
+      "artifactName": "Grandesk-${version}-windows-${arch}-setup.${ext}"
     },
     "linux": {
       "target": [

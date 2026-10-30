@@ -5,7 +5,7 @@ import { lineChart } from "../charts.js";
 import { icon } from "../icons.js";
 import {
   CLOSED, avatar, busy, clear, confirmDialog, emptyState, field, fmtDate, fromDateInput, fromStartInput, h,
-  modal, priorityBadge, select, spinner, statusBadge, toDateInput, toast, typeBadge,
+  modal, priorityBadge, select, spinner, statusBadge, toDateInput, toast, typeBadge, avatarStack,
 } from "../ui.js";
 
 const OPEN = ["todo", "in_progress", "blocked", "in_review"];
@@ -153,7 +153,7 @@ export async function renderProjectSprints(container, project, { owner }) {
   typeBadge(t.type),
   h("a.sp-title", { href: `#/tickets/${t.key}`, title: t.title }, t.title),
   h("span.sp-meta", statusBadge(t.status), priorityBadge(t.priority),
-    t.estimated_hours ? h("span.muted.small", `${t.estimated_hours}h`) : null, avatar(t.assignee, "sm")));
+    t.estimated_hours ? h("span.muted.small", `${t.estimated_hours}h`) : null, avatarStack(t.assignees, "sm")));
 
   function dropZone(el, sprintId) {
     if (!owner) return el;

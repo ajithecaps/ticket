@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Generic, TypeVar
+from typing import Annotated, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
@@ -36,6 +36,7 @@ class UserBrief(ORMModel):
     id: int
     name: str
     email: str
+    avatar_url: str | None = None  # profile photo, when the person uploaded one
 
 
 class UserOut(UserBrief):
@@ -43,6 +44,51 @@ class UserOut(UserBrief):
     designation: str | None = None
     is_active: bool
     created_at: datetime
+
+
+class ProfileOut(UserOut):
+    bio: str = ""
+    phone: str | None = None
+    location: str | None = None
+    timezone: str | None = None
+    skills: list[str] = []
+    coach_enabled: bool = True
+    coach_name: str = "Spark"
+    coach_tone: str = "cheerful"
+    daily_goal: int = 2
+
+    @field_validator("skills", mode="before")
+    @classmethod
+    def _none_skills(cls, v):
+        return v or []
+
+
+class ProfileUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=120)
+    designation: str | None = Field(None, max_length=120)
+    bio: str | None = Field(None, max_length=1000)
+    phone: str | None = Field(None, max_length=40)
+    location: str | None = Field(None, max_length=120)
+    timezone: str | None = Field(None, max_length=64)
+    skills: list[Annotated[str, Field(min_length=1, max_length=30)]] | None = Field(None, max_length=15)
+    coach_enabled: bool | None = None
+    coach_name: str | None = Field(None, min_length=1, max_length=30)
+    coach_tone: Literal["cheerful", "calm", "coach", "witty"] | None = None
+    daily_goal: int | None = Field(None, ge=1, le=20)
+
+
+class PersonStats(BaseModel):
+    open: int
+    in_progress: int
+    done_30d: int
+    streak: int  # days in a row with something finished
+
+
+class PersonProfile(ProfileOut):
+    """Someone's public profile (contact details and work stats; the coach settings stay private)."""
+
+    stats: PersonStats
+    shared_projects: list["ProjectBrief"] = []
 
 
 class UserCreate(BaseModel):
@@ -149,7 +195,9 @@ class TicketCreate(BaseModel):
     description: str = Field("", max_length=20000)
     priority: TicketPriority = TicketPriority.MEDIUM
     type: TicketType = TicketType.TASK
-    assignee_id: int | None = Field(None, description="Project owners / admin only")
+    assignee_id: int | None = Field(None, description="Project owners / admin only (one person)")
+    assignee_ids: list[int] | None = Field(
+        None, max_length=20, description="Project owners / admin only: several people, the first is the lead")
     start_date: datetime | None = Field(None, description="Planned start (project owners / admin)")
     due_date: datetime | None = None
     sprint_id: int | None = Field(None, description="Plan straight into a sprint (project owners / admin)")
@@ -176,7 +224,9 @@ class TicketUpdate(BaseModel):
 
 
 class AssignIn(BaseModel):
-    assignee_id: int | None = Field(None, description="null to unassign")
+    assignee_id: int | None = Field(None, description="One person; null to unassign")
+    assignee_ids: list[int] | None = Field(
+        None, max_length=20, description="Everyone working on it, the lead first; [] to unassign. Wins over assignee_id")
 
 
 class StatusChange(BaseModel):
@@ -209,7 +259,8 @@ class TicketOut(ORMModel):
     priority: TicketPriority
     type: TicketType
     reporter: UserBrief
-    assignee: UserBrief | None = None
+    assignee: UserBrief | None = Field(None, description="The lead (first) assignee")
+    assignees: list[UserBrief] = Field(default_factory=list, description="Everyone assigned, the lead first")
     start_date: datetime | None = None
     due_date: datetime | None = None
     is_overdue: bool
@@ -540,6 +591,7 @@ class ReleaseOut(ORMModel):
     unverified_count: int = 0  # tickets still "done" (verified automatically when released)
     can_edit: bool = False  # admin / project owner: name (while planned) and notes (always)
     can_manage: bool = False  # admin / project owner while planned: tickets, release, delete
+    matched_tickets: list[str] = []  # with ?q=: keys of the tickets inside that matched
     created_at: datetime
     updated_at: datetime
 
@@ -739,3 +791,6 @@ class BurndownPoint(BaseModel):
     date: str
     remaining: int | None = None  # None for days still in the future
     ideal: float
+
+
+PersonProfile.model_rebuild()

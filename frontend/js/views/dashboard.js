@@ -1,8 +1,9 @@
 import { api, auth } from "../api.js";
-import { STATUSES, avatar, clear, countUp, h, label, priorityBadge, spinner } from "../ui.js";
+import { STATUSES, avatar, clear, countUp, h, label, priorityBadge, spinner, avatarStack } from "../ui.js";
 import { lineChart, sparkline, stackedBars } from "../charts.js";
 import { daysLeftPill, sprintRange } from "./sprints.js";
 import { ticketTable } from "./ticketlist.js";
+import { coachCard } from "./coach.js";
 
 const OPEN = ["todo", "in_progress", "blocked", "in_review"];
 
@@ -197,7 +198,7 @@ export async function renderDashboard(main) {
       h("div.card-head", h("h2", "Due this week"), h("a.small", { href: "#/timeline" }, "Timeline")),
       d.due_soon.length ? h("ul.due-list", d.due_soon.map((t) => h("li",
         h("a.due-main", { href: `#/tickets/${t.key}` }, h("span.key", t.key), h("span.ellipsis", t.title)),
-        h("div.due-meta", avatar(t.assignee, "sm"), h(`span.chip-due${t.is_overdue ? ".overdue" : ""}`, shortDate(t.due_date.slice(0, 10))))))) : h("p.muted.pad", "Nothing due in the next 7 days."));
+        h("div.due-meta", avatarStack(t.assignees, "sm"), h(`span.chip-due${t.is_overdue ? ".overdue" : ""}`, shortDate(t.due_date.slice(0, 10))))))) : h("p.muted.pad", "Nothing due in the next 7 days."));
 
     const releaseCard = d.releases.length > 0 && h("section.card.flush.dash-releases",
       h("div.card-head", h("h2", "Upcoming releases"), h("a.small", { href: "#/releases" }, "All releases")),
@@ -226,6 +227,7 @@ export async function renderDashboard(main) {
     countUp(body);
   }
 
+  const coach = coachCard();
   const first = auth.user.name.split(/\s+/)[0];
   const hour = new Date().getHours();
   clear(main,
@@ -233,6 +235,8 @@ export async function renderDashboard(main) {
       h("div", h("h1", `Good ${hour < 12 ? "morning" : hour < 17 ? "afternoon" : "evening"}, ${first}`),
         h("p.muted", isAdmin ? "Everything across your organisation." : owned.length ? "Your projects and your team at a glance." : "Here's what's on your plate.")),
       h("div.actions", projectSel, periodChips)),
+    coach,
     body);
   await load();
+  return () => coach._cleanup();
 }

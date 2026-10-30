@@ -16,6 +16,7 @@ from sqlalchemy import select
 
 from app.database import SessionLocal
 from app.models import (
+    TicketAssignee,
     Project,
     ProjectMember,
     ProjectRole,
@@ -119,6 +120,8 @@ def main(reset: bool) -> None:
                 estimated_hours=est,
                 spent_hours=spent,
             )
+            if assignee:
+                ticket.assignee_links = [TicketAssignee(user_id=assignee.id, assigned_at=ticket.assigned_at)]
             if status != TicketStatus.TODO:
                 ticket.started_at = now - timedelta(days=5)
                 apply_status_change(ticket, status)

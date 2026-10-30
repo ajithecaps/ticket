@@ -3,8 +3,9 @@ import { icon } from "../icons.js";
 import { navigate } from "../app.js";
 import {
   CLOSED, STATUSES, avatar, busy, clear, confirmDialog, emptyState, errorBox, field, fmtDate, formData, h, label,
-  modal, priorityBadge, select, spinner, timeAgo, toast, typeBadge, userPicker,
+  modal, priorityBadge, select, spinner, timeAgo, toast, typeBadge, userPicker, avatarStack,
 } from "../ui.js";
+import { cheerIfMine } from "./coach.js";
 import { filteredTicketList } from "./ticketlist.js";
 import { newTicketDialog } from "./ticket.js";
 import { renderProjectUpcoming } from "./upcoming.js";
@@ -171,8 +172,8 @@ async function renderBoard(body, project, owner) {
   }
 
   const matches = (t) => {
-    if (filter.mine && t.assignee?.id !== auth.user.id) return false;
-    if (filter.person === "none" ? t.assignee : filter.person && String(t.assignee?.id) !== filter.person) return false;
+    if (filter.mine && !t.assignees.some((u) => u.id === auth.user.id)) return false;
+    if (filter.person === "none" ? t.assignees.length : filter.person && !t.assignees.some((u) => String(u.id) === filter.person)) return false;
     if (filter.priority && t.priority !== filter.priority) return false;
     if (filter.q) {
       const q = filter.q.toLowerCase();
@@ -190,8 +191,8 @@ async function renderBoard(body, project, owner) {
   });
   function drawToolbar() {
     const people = new Map();
-    tickets.forEach((t) => { if (t.assignee) people.set(t.assignee.id, t.assignee); });
-    const unassigned = tickets.some((t) => !t.assignee);
+    tickets.forEach((t) => t.assignees.forEach((u) => people.set(u.id, u)));
+    const unassigned = tickets.some((t) => !t.assignees.length);
     const personBtn = (key, content, title) => h("button.person-filter", {
       type: "button", title, "aria-pressed": String(filter.person === key),
       onclick: () => { filter.person = filter.person === key ? "" : key; drawToolbar(); draw(); },
@@ -261,6 +262,7 @@ async function renderBoard(body, project, owner) {
     try {
       await api.post(`/tickets/${t.id}/status`, { status });
       toast(`${t.key} → ${label(status)}`);
+      cheerIfMine(t, status);
     } catch (err) {
       t.status = prev;
       toast(err.message, "error");
@@ -304,7 +306,7 @@ async function renderBoard(body, project, owner) {
         pct !== null && h("span.tc-time", { title: `${t.spent_hours || 0}h logged of ${t.estimated_hours}h estimated` },
           h("span.tc-bar", h("i", { class: pct >= 100 ? "over" : "", style: { width: `${pct}%` } })),
           `${Math.round((t.spent_hours || 0) * 10) / 10}/${t.estimated_hours}h`)),
-      avatar(t.assignee, "sm")));
+      avatarStack(t.assignees, "sm")));
     return el;
   }
 
@@ -318,7 +320,7 @@ function renderMembers(body, project, members, owner) {
     clear(list, h("div.table-wrap", h("table.table",
       h("thead", h("tr", h("th", "Person"), h("th", "Role"), h("th.hide-sm", "Joined"), owner && h("th"))),
       h("tbody", members.map((m) => h("tr",
-        h("td", h("div.user-chip", avatar(m.user, "sm"), h("div", h("div", m.user.name), h("div.muted.small", m.user.email)))),
+        h("td", h("a.user-chip", { href: `#/people/${m.user.id}` }, avatar(m.user, "sm"), h("div", h("div", m.user.name), h("div.muted.small", m.user.email)))),
         h("td", isAdmin()
           ? select("role", ["owner", "developer"], m.role, { "aria-label": `Role of ${m.user.name}`, onchange: (e) => changeRole(m, e.target) })
           : h(`span.badge${m.role === "owner" ? ".accent" : ""}`, label(m.role))),

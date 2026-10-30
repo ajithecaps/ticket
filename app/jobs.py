@@ -95,10 +95,10 @@ def check_overdue(db: Session) -> list[Ticket]:
         if alerted_for.get(t.id) == t.due_date.isoformat():
             continue  # already alerted for this due date
         fresh.append(t)
-        who = t.assignee.name if t.assignee else "nobody"
+        who = ", ".join(u.name for u in t.assignees) or "nobody"
         log_activity(db, t, None, OVERDUE_ACTION, "due_date", None, t.due_date.isoformat())
         notify(
-            db, [t.assignee_id, *project_owner_ids(db, t.project_id)], actor=None, type=NotificationType.OVERDUE,
+            db, [*t.assignee_ids, *project_owner_ids(db, t.project_id)], actor=None, type=NotificationType.OVERDUE,
             message=f"{t.key} {t.title} is overdue - it was due {_fmt_day(t.due_date)} (assigned to {who})",
             ticket=t, slack=False,
         )
@@ -106,7 +106,7 @@ def check_overdue(db: Session) -> list[Ticket]:
         return []
 
     lines = [
-        (t.key, t.title, t.due_date, t.priority.value, (t.assignee.name, t.assignee.email) if t.assignee else None)
+        (t.key, t.title, t.due_date, t.priority.value, [(u.name, u.email) for u in t.assignees])
         for t in fresh
     ]
     db.commit()
@@ -118,8 +118,8 @@ def check_overdue(db: Session) -> list[Ticket]:
 def _overdue_message(lines) -> str:
     head = f":alarm_clock: *{len(lines)} ticket{'s are' if len(lines) != 1 else ' is'} now overdue*"
     rows = []
-    for key, title, due, priority, assignee in lines[:25]:
-        who = slack.person(*assignee) if assignee else "_unassigned_"
+    for key, title, due, priority, assignees in lines[:25]:
+        who = ", ".join(slack.person(*a) for a in assignees) or "_unassigned_"
         rows.append(f"• {slack.ticket_link(key, title)} - due {_fmt_day(due)} · {priority} · {who}")
     if len(lines) > 25:
         rows.append(f"…and {len(lines) - 25} more")
@@ -173,9 +173,10 @@ def build_daily_summary(db: Session) -> str:
         if t.assignee_id is None:
             unassigned += 1
             continue
-        per_user[t.assignee_id][t.status] += 1
-        if t.due_date and t.due_date < now:
-            overdue[t.assignee_id] += 1
+        for uid in t.assignee_ids:  # a shared ticket is on everyone's plate
+            per_user[uid][t.status] += 1
+            if t.due_date and t.due_date < now:
+                overdue[uid] += 1
 
     rows = []
     for u in sorted(team, key=lambda u: (-sum(per_user[u.id].values()), u.name.lower())):

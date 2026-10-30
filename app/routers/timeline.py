@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
 from ..deps import CurrentUser, DbSession
-from ..models import CLOSED_STATUSES, Project, ProjectMember, ProjectRole, Ticket, User
+from ..models import CLOSED_STATUSES, Project, ProjectMember, ProjectRole, Ticket, User, assigned_to_any
 from ..permissions import is_admin
 from ..schedule import intersects, overlap_map, window
 from ..schemas import OverlapOut, TicketOut, TimelineOut, TimelineRow, TimelineTicket, UserBrief
@@ -50,7 +50,7 @@ def _open_assigned(db, *, project_ids: set[int] | None, assignee_ids: set[int] |
     if project_ids is not None:
         stmt = stmt.where(Ticket.project_id.in_(project_ids or {0}))
     if assignee_ids is not None:
-        stmt = stmt.where(Ticket.assignee_id.in_(assignee_ids or {0}))
+        stmt = stmt.where(assigned_to_any(assignee_ids))
     return list(db.scalars(stmt).unique())
 
 
@@ -105,7 +105,8 @@ def timeline(
     owns = (lambda pid: True) if is_admin(user) else (lambda pid, _o=_owned_projects(db, user.id): pid in _o)
     per_person: dict[int, list[Ticket]] = defaultdict(list)
     for t in tickets:
-        per_person[t.assignee_id].append(t)
+        for uid in t.assignee_ids:  # a shared ticket shows on every assignee's row
+            per_person[uid].append(t)
 
     users = {u.id: u for u in db.scalars(select(User).where(User.id.in_(people_ids or {0}), User.is_active.is_(True)))}
     rows = []

@@ -103,8 +103,9 @@ def dashboard(
     # ---- workload
     per: dict[int, list[Ticket]] = defaultdict(list)
     for t in open_t:
-        if t.assignee_id in people_ids:
-            per[t.assignee_id].append(t)
+        for uid in t.assignee_ids:  # shared tickets count for everyone on them
+            if uid in people_ids:
+                per[uid].append(t)
     users = {u.id: u for u in db.scalars(select(User).where(User.id.in_(people_ids or {0}), User.is_active.is_(True)))}
     workload = []
     for uid, u in users.items():
@@ -122,7 +123,7 @@ def dashboard(
     # ---- lists
     due_pool = [t for t in open_t if t.due_date and ensure_utc(t.due_date) <= week_end]
     if scope != "all" and scope != "owned":
-        due_pool = [t for t in due_pool if t.assignee_id == user.id]
+        due_pool = [t for t in due_pool if user.id in t.assignee_ids]
     due_soon = [TicketOut.model_validate(t) for t in sorted(due_pool, key=lambda t: ensure_utc(t.due_date))[:10]]
 
     acts = db.execute(

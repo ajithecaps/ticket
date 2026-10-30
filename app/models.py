@@ -11,6 +11,8 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     JSON,
+    LargeBinary,
+    select,
     String,
     Table,
     Text,
@@ -19,6 +21,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator
 
+from .config import settings
 from .database import Base
 from .utils import utcnow
 
@@ -156,6 +159,37 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
+    # Profile - each person fills these in themselves.
+    bio: Mapped[str] = mapped_column(Text, default="")
+    phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    location: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)  # IANA name, e.g. "Asia/Kolkata"
+    skills: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Changes with every new photo, so the public photo URL is unguessable and caches forever.
+    avatar_key: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+    # The personal motivator ("coach") that suggests the next task and cheers progress.
+    coach_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    coach_name: Mapped[str] = mapped_column(String(30), default="Spark")
+    coach_tone: Mapped[str] = mapped_column(String(20), default="cheerful")
+    daily_goal: Mapped[int] = mapped_column(default=2)
+
+    @property
+    def avatar_url(self) -> str | None:
+        return f"{settings.API_PREFIX}/avatars/{self.avatar_key}" if self.avatar_key else None
+
+
+class UserAvatar(Base):
+    """A profile photo (already resized in the browser to a small square)."""
+
+    __tablename__ = "user_avatars"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    key: Mapped[str] = mapped_column(String(40), unique=True)
+    mime: Mapped[str] = mapped_column(String(40))
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
 
 class Project(Base):
     __tablename__ = "projects"
@@ -242,6 +276,18 @@ class Ticket(Base):
     sprint: Mapped["Sprint | None"] = relationship(back_populates="tickets", lazy="joined")
     reporter: Mapped[User] = relationship(foreign_keys=[reporter_id], lazy="joined")
     assignee: Mapped[User | None] = relationship(foreign_keys=[assignee_id], lazy="joined")
+    # Everyone working on it, the lead (assignee_id) first. Kept in sync by services.set_assignees().
+    assignee_links: Mapped[list["TicketAssignee"]] = relationship(
+        cascade="all, delete-orphan", order_by="TicketAssignee.position", lazy="selectin"
+    )
+
+    @property
+    def assignees(self) -> list[User]:
+        return [link.user for link in self.assignee_links]
+
+    @property
+    def assignee_ids(self) -> list[int]:
+        return [link.user_id for link in self.assignee_links]
 
     comments: Mapped[list["Comment"]] = relationship(
         back_populates="ticket", cascade="all, delete-orphan", order_by="Comment.id"
@@ -690,3 +736,26 @@ class ChallengeAttempt(Base):
     @property
     def score_ms(self) -> int | None:
         return None if self.duration_ms is None else self.duration_ms + self.penalty_ms
+
+
+class TicketAssignee(Base):
+    """One person assigned to a ticket. A ticket can have several; position 0 is the lead, which is
+    also stored on tickets.assignee_id (used for sorting, efficiency start times and Slack)."""
+
+    __tablename__ = "ticket_assignees"
+
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True)
+    position: Mapped[int] = mapped_column(default=0)
+    assigned_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+    user: Mapped[User] = relationship(lazy="joined")
+
+
+def assigned_to(user_id: int):
+    """SQL condition: the ticket has this person among its assignees."""
+    return Ticket.id.in_(select(TicketAssignee.ticket_id).where(TicketAssignee.user_id == user_id))
+
+
+def assigned_to_any(user_ids):
+    return Ticket.id.in_(select(TicketAssignee.ticket_id).where(TicketAssignee.user_id.in_(user_ids or {0})))

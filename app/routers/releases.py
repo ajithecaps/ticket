@@ -10,7 +10,7 @@
 from collections import Counter
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import and_, false, func, or_, select
 
 from ..config import settings
 from ..deps import CurrentUser, DbSession
@@ -28,7 +28,7 @@ from ..models import (
 from ..permissions import is_admin, is_project_owner, require_member, require_owner
 from ..schemas import ReleaseCreate, ReleaseDetail, ReleaseOut, ReleaseTicketsIn, ReleaseUpdate, TicketOut
 from ..services import apply_status_change, log_activity, notify
-from ..utils import ensure_utc, utcnow
+from ..utils import ensure_utc, escape_like, utcnow
 
 router = APIRouter(tags=["Releases"])
 
@@ -91,6 +91,7 @@ def list_releases(
     db: DbSession,
     project_id: int | None = None,
     status_: ReleaseStatus | None = Query(None, alias="status"),
+    q: str | None = Query(None, max_length=100, description="Release name, or the key / title of a ticket inside it"),
 ):
     stmt = select(Release).join(Project, Project.id == Release.project_id).where(Project.is_active.is_(True))
     if not is_admin(user):
@@ -99,6 +100,15 @@ def list_releases(
         stmt = stmt.where(Release.project_id == project_id)
     if status_ is not None:
         stmt = stmt.where(Release.status == status_)
+    ticket_match = None
+    if q and q.strip():
+        q = q.strip()
+        like = f"%{escape_like(q)}%"
+        ticket_match = or_(Ticket.title.ilike(like, escape="\\"), _key_match(q))
+        stmt = stmt.where(or_(
+            Release.name.ilike(like, escape="\\"),
+            Release.id.in_(select(Ticket.release_id).join(Project, Project.id == Ticket.project_id).where(ticket_match)),
+        ))
     # planned first (soonest date first), then released (newest first)
     stmt = stmt.order_by(
         Release.status != ReleaseStatus.PLANNED,
@@ -107,13 +117,28 @@ def list_releases(
         Release.planned_date,
         Release.id.desc(),
     )
-    return [_out(db, user, r) for r in db.scalars(stmt).unique()]
+    out = [_out(db, user, r) for r in db.scalars(stmt).unique()]
+    if ticket_match is not None:  # say which tickets made a release match
+        for r in out:
+            r.matched_tickets = [t.key for t in db.scalars(
+                select(Ticket).join(Project, Project.id == Ticket.project_id)
+                .where(Ticket.release_id == r.id, ticket_match).order_by(Ticket.number).limit(5)
+            ).unique()]
+    return out
+
+
+def _key_match(q: str):
+    """"PAY-12" finds that ticket."""
+    key, _, number = q.upper().partition("-")
+    if not number.isdigit():
+        return false()
+    return and_(Project.key == key, Ticket.number == int(number))
 
 
 @router.get("/projects/{project_id}/releases", response_model=list[ReleaseOut])
 def list_project_releases(project_id: int, user: CurrentUser, db: DbSession):
     require_member(db, user, project_id)
-    return list_releases(user, db, project_id=project_id, status_=None)
+    return list_releases(user, db, project_id=project_id, status_=None, q=None)
 
 
 @router.get("/releases/{release_id}", response_model=ReleaseDetail)

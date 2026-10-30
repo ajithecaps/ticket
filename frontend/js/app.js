@@ -22,6 +22,8 @@ import { renderLoginPage } from "./views/login.js";
 import { renderChat, startChat, stopChat } from "./views/chat.js";
 import { desktopShell, renderDesktop } from "./views/desktop.js";
 import { refreshChallengeDot, renderChallenge } from "./views/challenge.js";
+import { renderPerson, renderProfile } from "./views/profile.js";
+import { coachButton } from "./views/coach.js";
 
 const root = document.getElementById("app");
 const isAdmin = () => auth.user?.role === "admin";
@@ -36,6 +38,8 @@ const routes = [
   [/^\/notifications$/, renderNotifications],
   [/^\/desktop$/, renderDesktop],
   [/^\/challenge$/, renderChallenge],
+  [/^\/profile$/, renderProfile],
+  [/^\/people\/(\d+)$/, (el, [id]) => renderPerson(el, Number(id))],
   [/^\/chat(?:\/(\d+))?$/, (el, [id]) => renderChat(el, [id])],
   [/^\/users$/, renderUsers, true],
   [/^\/reports$/, renderReports, true],
@@ -185,6 +189,7 @@ function renderShell() {
         type: "button", "aria-pressed": String(getTheme() === v), dataset: { theme: v }, title: text,
         onclick: (e) => { e.stopPropagation(); setTheme(v); },
       }, icon(ic, { size: 14 }), text)))),
+    h("button", { onclick: () => { closeAccount(); navigate("/profile"); } }, icon("user"), "Your profile"),
     h("button", { onclick: () => { closeAccount(); showShortcuts(); } }, icon("keyboard"), "Keyboard shortcuts", h("kbd.menu-kbd", "?")),
     h("button", { onclick: () => { closeAccount(); changePassword(); } }, icon("key"), "Change password"),
     h("button", { onclick: () => { closeAccount(); navigate("/desktop"); } }, icon("download"), desktopShell() ? `Desktop app ${desktopShell().version}` : "Get the desktop app"),
@@ -196,6 +201,12 @@ function renderShell() {
     }, avatar(u), h("span.account-text", h("strong", u.name), h("span", isAdmin() ? "Administrator" : u.designation || "Member")), icon("chevron-down", { size: 14, cls: "account-caret" })),
     accountMenu);
   const closeAccount = () => account.classList.remove("open");
+  window.addEventListener("profile-changed", () => {
+    const btn = account.querySelector(".account-btn");
+    btn.querySelector(".avatar").replaceWith(avatar(auth.user));
+    btn.querySelector(".account-text strong").textContent = auth.user.name;
+    accountMenu.querySelector(".menu-head strong").textContent = auth.user.name;
+  });
   document.addEventListener("click", (e) => { if (!account.contains(e.target)) closeAccount(); });
 
   const collapseBtn = h("button.icon-btn.collapse-btn", {
@@ -220,7 +231,7 @@ function renderShell() {
     h("div.shell",
       h("aside.sidebar",
         h("div.sidebar-top",
-          h("a.brand", { href: "#/" }, h("span.logo", icon("tickets", { size: 16 })), h("span.brand-text", "Tickets")),
+          h("a.brand", { href: "#/" }, h("span.logo", icon("grandesk", { size: 17 })), h("span.brand-text", "Grandesk")),
           collapseBtn),
         h("button.sidebar-search", { type: "button", onclick: () => openPalette() },
           icon("search", { size: 16 }), h("span.nav-text", "Search"), h("span.nav-text.kbd-hint", h("kbd", MOD), h("kbd", "K"))),
@@ -234,6 +245,7 @@ function renderShell() {
             icon("search", { size: 16 }), h("span", "Search or jump to…"), h("span.kbd-hint", h("kbd", MOD), h("kbd", "K"))),
           h("div.topbar-actions",
             h("button.btn.primary.sm.new-btn", { type: "button", onclick: newTicketAnywhere, title: "Create ticket (C)" }, icon("plus", { size: 15 }), h("span", "New ticket")),
+            coachButton(),
             h("button.icon-btn", { type: "button", title: "Keyboard shortcuts (?)", "aria-label": "Keyboard shortcuts", onclick: showShortcuts }, icon("keyboard", { size: 18 })),
             themeButton(),
             bell.el)),

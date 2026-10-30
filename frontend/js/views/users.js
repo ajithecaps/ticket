@@ -27,7 +27,7 @@ export async function renderUsers(main) {
   const table = (users) => h("div.table-wrap", h("table.table",
     h("thead", h("tr", h("th", "Name"), h("th.hide-sm", "Designation"), h("th", "Role"), h("th.hide-sm", "Status"), h("th.hide-md", "Joined"), h("th"))),
     h("tbody", users.map((u) => h(`tr${u.is_active ? "" : ".inactive"}`,
-      h("td", h("div.user-chip", avatar(u, "sm"), h("div", h("div", u.name), h("div.muted.small", u.email)))),
+      h("td", h("a.user-chip", { href: `#/people/${u.id}` }, avatar(u, "sm"), h("div", h("div", u.name), h("div.muted.small", u.email)))),
       h("td.hide-sm.muted", u.designation || "—"),
       h("td", h(`span.badge${u.role === "admin" ? ".accent" : ""}`, label(u.role))),
       h("td.hide-sm", u.is_active ? h("span.badge.ok", "Active") : h("span.badge", "Deactivated")),

@@ -19,6 +19,7 @@ from .models import (
     ProjectMember,
     Role,
     Ticket,
+    TicketAssignee,
     TicketStatus,
     User,
 )
@@ -119,13 +120,37 @@ def apply_status_change(ticket: Ticket, new_status: TicketStatus) -> None:
     ticket.status = new_status
 
 
-def reset_for_new_assignee(ticket: Ticket, assignee_id: int | None) -> None:
-    """Reassigning restarts progress tracking so the new assignee is not credited with earlier work."""
-    ticket.assignee_id = assignee_id
-    ticket.assigned_at = utcnow() if assignee_id else None
+def _restart_progress(ticket: Ticket) -> None:
     ticket.started_at = None
     if ticket.status not in CLOSED_STATUSES:
         ticket.status = TicketStatus.TODO
+
+
+def set_assignees(ticket: Ticket, user_ids: list[int]) -> tuple[list[int], list[int]]:
+    """Make `user_ids` the ticket's assignees, in that order (the first is the lead).
+
+    Progress tracking restarts (status back to *todo*, start time cleared) only when the work really
+    changes hands: everyone is replaced, or nobody is left. Adding or removing helpers keeps the
+    status, so pulling a colleague in never undoes progress. Returns (added ids, removed ids)."""
+    wanted = list(dict.fromkeys(user_ids))  # de-duplicate, keep order
+    old = ticket.assignee_ids
+    added = [u for u in wanted if u not in old]
+    removed = [u for u in old if u not in wanted]
+    keep = {link.user_id: link for link in ticket.assignee_links}
+    now = utcnow()
+    ticket.assignee_links = [
+        keep.get(uid) or TicketAssignee(user_id=uid, assigned_at=now) for uid in wanted
+    ]
+    for pos, link in enumerate(ticket.assignee_links):
+        link.position = pos
+    ticket.assignee_id = wanted[0] if wanted else None
+    if not wanted:
+        ticket.assigned_at = None
+        _restart_progress(ticket)
+    elif not old or not set(old) & set(wanted):
+        ticket.assigned_at = now
+        _restart_progress(ticket)
+    return added, removed
 
 
 def ensure_assignable(db: Session, project_id: int, user_id: int) -> User:

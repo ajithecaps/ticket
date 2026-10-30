@@ -14,7 +14,7 @@ const FEATURES = [
   ["timeline", "Gantt timeline with overlap checks"],
   ["check-circle", "Owner verification before release"],
   ["rocket", "Releases & Slack notifications"],
-  ["docs", "Docs with rich Markdown & diagrams"],
+  ["sparkles", "A personal coach that keeps you moving"],
 ];
 
 function remembered() { try { return localStorage.getItem(REMEMBER_KEY) || ""; } catch { return ""; } }
@@ -77,8 +77,8 @@ export function renderLoginPage(root, { message, onSuccess }) {
     h("div.lp-aurora", h("i.a1"), h("i.a2"), h("i.a3")),
     h("div.lp-grid-bg"),
     h("div.lp-brand-inner",
-      h("div.lp-logo", h("span.logo", icon("tickets", { size: 20 })), h("span", "Tickets")),
-      h("div.lp-copy", headline, h("p.lp-sub", "The ticket system for development teams - boards, timelines, releases and docs, in one fast workspace."), dots),
+      h("div.lp-logo", h("span.logo", icon("grandesk", { size: 21 })), h("span", "Grandesk")),
+      h("div.lp-copy", headline, h("p.lp-sub", "Grandesk is where development teams work - tickets, boards, timelines, releases and docs, in one fast workspace."), dots),
       boardPreview(),
       h("ul.lp-features", FEATURES.map(([ic, text], i) => h("li", { style: { "--i": i } }, h("span.lp-fi", icon(ic, { size: 15 })), text)))));
 
@@ -146,8 +146,8 @@ export function renderLoginPage(root, { message, onSuccess }) {
 
   clear(card,
     h("div.lp-form-head",
-      h("div.lp-mobile-logo", h("span.logo", icon("tickets", { size: 18 })), h("strong", "Tickets")),
-      h("h1", saved ? "Welcome back" : "Sign in"),
+      h("div.lp-mobile-logo", h("span.logo", icon("grandesk", { size: 19 })), h("strong", "Grandesk")),
+      h("h1", saved ? "Welcome back" : "Sign in to Grandesk"),
       h("p.muted", saved ? `Signing in as ${saved}` : "Use your work e-mail to continue.")),
     form,
     h("p.lp-foot.muted", icon("lock", { size: 13 }), "Your session is private to this browser."));
