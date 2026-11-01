@@ -365,6 +365,44 @@ class Attachment(Base):
     uploader: Mapped[User] = relationship(lazy="joined", foreign_keys=[uploaded_by])
 
 
+class ProjectFolder(Base):
+    """A folder in a project's Files section. Folders nest; deleting one deletes what's inside."""
+
+    __tablename__ = "project_folders"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("project_folders.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    name: Mapped[str] = mapped_column(String(120))
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+    creator: Mapped[User | None] = relationship(lazy="joined", foreign_keys=[created_by])
+
+
+class ProjectFile(Base):
+    """A document kept in a project's Files section (stored under UPLOAD_DIR/project-files/<project>)."""
+
+    __tablename__ = "project_files"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    folder_id: Mapped[int | None] = mapped_column(
+        ForeignKey("project_folders.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    filename: Mapped[str] = mapped_column(String(255))
+    stored_name: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(120), default="application/octet-stream")
+    size: Mapped[int] = mapped_column(default=0)
+    uploaded_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+    uploader: Mapped[User] = relationship(lazy="joined", foreign_keys=[uploaded_by])
+
+
 class Worklog(Base):
     __tablename__ = "worklogs"
 

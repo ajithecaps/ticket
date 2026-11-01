@@ -153,16 +153,60 @@ export async function addToReleaseDialog(projectId, { releaseId = null, preselec
     onchange: () => { newWrap.hidden = relSel.value !== "__new"; },
   });
   const newWrap = h("div", { hidden: Boolean(planned.length) }, field("New release name", newName));
-  const all = h("input", { type: "checkbox", checked: checks.every((c) => c.checked), onchange: () => checks.forEach((c) => { c.checked = all.checked; }) });
+  // filters only hide rows: ticked tickets stay ticked while you search for more
+  const f = { q: "", type: "", priority: "", status: "", person: "" };
+  const items = page.items;
+  const rows = items.map((t, i) => h("label.check.pick-row", checks[i],
+    h("span.key", t.key), typeBadge(t.type), h("span.grow.ellipsis", t.title), priorityBadge(t.priority),
+    t.assignees.length ? assigneesChip(t.assignees) : null, statusBadge(t.status)));
+  const visible = () => items.map((t, i) => [t, i]).filter(([t]) => {
+    const q = f.q.trim().toLowerCase();
+    return (!q || t.key.toLowerCase().includes(q) || t.title.toLowerCase().includes(q))
+      && (!f.type || t.type === f.type) && (!f.priority || t.priority === f.priority) && (!f.status || t.status === f.status)
+      && (!f.person || (f.person === "none" ? !t.assignees.length : t.assignees.some((u) => String(u.id) === f.person)));
+  }).map(([, i]) => i);
+  const allLabel = h("strong");
+  const summary = h("span.muted.small");
+  const empty = h("p.muted.pad", { hidden: true }, "No finished tickets match these filters.");
+  const all = h("input", { type: "checkbox", onchange: () => { visible().forEach((i) => { checks[i].checked = all.checked; }); sync(); } });
+  function sync() {
+    const shown = visible();
+    rows.forEach((r, i) => { r.hidden = !shown.includes(i); });
+    empty.hidden = shown.length > 0;
+    all.checked = shown.length > 0 && shown.every((i) => checks[i].checked);
+    all.indeterminate = !all.checked && shown.some((i) => checks[i].checked);
+    allLabel.textContent = shown.length === items.length ? `All finished tickets (${items.length})` : `All shown (${shown.length} of ${items.length})`;
+    const ticked = checks.filter((c) => c.checked).length;
+    const hiddenTicked = checks.filter((c, i) => c.checked && !shown.includes(i)).length;
+    summary.textContent = `${ticked} selected${hiddenTicked ? ` (${hiddenTicked} hidden by filters)` : ""}`;
+  }
+  checks.forEach((c) => c.addEventListener("change", sync));
+
+  const people = new Map();
+  items.forEach((t) => t.assignees.forEach((u) => people.set(u.id, u)));
+  const types = TYPE_ORDER.filter((k) => items.some((t) => t.type === k));
+  const search = h("input", { type: "search", placeholder: "Filter by key or title", "aria-label": "Filter tickets",
+    oninput: () => { f.q = search.value; sync(); } });
+  const sel = (key, options, aria) => h("select", { "aria-label": aria, onchange: (e) => { f[key] = e.target.value; sync(); } },
+    options.map(([v, text]) => h("option", { value: v }, text)));
+  const filters = items.length > 1 && h("div.row.wrap.rel-pick-filters",
+    h("label.search-box", icon("search", { size: 15 }), search),
+    types.length > 1 && sel("type", [["", "All types"], ...types.map((k) => [k, TYPE_HEADING[k]])], "Type"),
+    sel("priority", [["", "Any priority"], ["critical", "Critical"], ["high", "High"], ["medium", "Medium"], ["low", "Low"]], "Priority"),
+    items.some((t) => t.status === "verified") && items.some((t) => t.status === "done")
+      && sel("status", [["", "Done & verified"], ["done", "Done"], ["verified", "Verified"]], "Status"),
+    people.size > 0 && sel("person", [["", "Anyone"], ...[...people.values()].sort((a, b) => a.name.localeCompare(b.name)).map((u) => [String(u.id), u.name]),
+      ...(items.some((t) => !t.assignees.length) ? [["none", "Unassigned"]] : [])], "Assignee"));
 
   const form = h("form.form",
     !releaseId && h("div.grid-2.tight", field("Release", relSel), newWrap),
+    filters,
     h("div.pick-list",
-      h("label.check.pick-all", all, h("strong", `All finished tickets (${page.items.length})`)),
-      page.items.map((t, i) => h("label.check.pick-row", checks[i],
-        h("span.key", t.key), typeBadge(t.type), h("span.grow.ellipsis", t.title), statusBadge(t.status)))),
+      h("label.check.pick-all", all, allLabel),
+      rows, empty),
     h("p.hint", "Tickets still in Done are verified automatically when the release goes to production."),
-    h("div.form-actions", h("button.btn.primary", { type: "submit" }, "Move to release")));
+    h("div.form-actions.rel-pick-actions", summary, h("button.btn.primary", { type: "submit" }, "Move to release")));
+  sync();
   const m = modal("Move tickets to a release", form, { wide: true });
 
   form.addEventListener("submit", (e) => {

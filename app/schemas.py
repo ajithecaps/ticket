@@ -341,6 +341,73 @@ class AttachmentOut(ORMModel):
     created_at: datetime
 
 
+class TicketAttachmentOut(AttachmentOut):
+    """An attachment listed in the project's Files section, with the ticket it belongs to."""
+
+    ticket_key: str
+    ticket_title: str
+
+
+class FolderCrumb(ORMModel):
+    id: int
+    name: str
+
+
+class FolderOut(ORMModel):
+    id: int
+    project_id: int
+    parent_id: int | None = None
+    name: str
+    creator: UserBrief | None = None
+    created_at: datetime
+    folder_count: int = 0
+    file_count: int = 0
+    can_edit: bool = False
+
+
+class ProjectFileOut(ORMModel):
+    id: int
+    project_id: int
+    folder_id: int | None = None
+    filename: str
+    content_type: str
+    size: int
+    uploader: UserBrief
+    created_at: datetime
+    updated_at: datetime
+    can_edit: bool = False
+    path: list[FolderCrumb] = []  # filled in search results: where the file lives
+
+
+class FolderListing(BaseModel):
+    project: "ProjectBrief"
+    folder: FolderOut | None = None  # None = the top level
+    path: list[FolderCrumb] = []
+    folders: list[FolderOut] = []
+    files: list[ProjectFileOut] = []
+    ticket_attachment_count: int = 0  # shown as a "Ticket attachments" folder at the top level
+    can_manage: bool = False  # project owner / admin: may rename / move / delete anything
+
+
+class FolderCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    parent_id: int | None = None
+
+
+class FolderUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=120)
+    parent_id: int | None = None  # move (send null to move to the top level)
+
+
+class ProjectFileUpdate(BaseModel):
+    filename: str | None = Field(None, min_length=1, max_length=255)
+    folder_id: int | None = None  # move (send null to move to the top level)
+
+
+class AttachFromFiles(BaseModel):
+    file_ids: list[int] = Field(min_length=1, max_length=20)
+
+
 class CommentCreate(BaseModel):
     body: str = Field(min_length=1, max_length=10000)
     mention_user_ids: list[int] = Field(
@@ -794,3 +861,4 @@ class BurndownPoint(BaseModel):
 
 
 PersonProfile.model_rebuild()
+FolderListing.model_rebuild()

@@ -172,8 +172,21 @@ You set up the coach in the profile:
 
 Those settings are private; teammates don't see them.
 
+### Project files
+
+Each project has a **Files** tab, also reachable from **Files** in the sidebar (`G F`). It is a shared folder tree for documents that don't belong to one ticket, such as specs, designs and contracts.
+
+- **Who can do what:** project members browse, upload and create folders. The uploader or folder creator can rename, move or delete their own items; project owners and admins can do it for anything.
+- **Uploading:** click **Upload** or drop files anywhere on the section. The usual upload limits and blocked file types apply.
+- **Viewing:** clicking a file previews it in the app (images, PDF, Markdown, CSV and Excel, Word, code and more). The search box searches names across the whole project.
+- **Ticket attachments:** this folder at the top level lists every file attached to the project's tickets, with a link to each ticket.
+- **Attaching to a ticket:** on a ticket's Files tab, **Attach from project files** copies picked files onto the ticket.
+- **Deleting:** deleting a folder deletes everything inside it. A member who isn't an owner can only delete a folder that holds nothing but their own items.
+- **Storage:** files are kept under `UPLOAD_DIR/project-files/<project id>/`, so they live on the same uploads volume as ticket attachments.
+
 ### Finding tickets in releases
 
+- **Adding tickets:** the **Move tickets to a release** dialog filters the finished tickets by key or title, type, priority, status and assignee. Ticked tickets stay ticked while hidden, and the footer shows how many are selected.
 - **Releases page:** filter by Planned or Released and by project. The search box matches a release name, and also a ticket key or title inside a release, so typing `PAY-12` finds which release shipped it. The card then says "Contains PAY-12", and opening it shows that ticket already filtered.
 - **Inside a release:** filter the ticket list by key or title, type, status (Done or Verified) and assignee.
 

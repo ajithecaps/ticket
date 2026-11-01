@@ -1835,3 +1835,65 @@ def test_release_search(client, admin, world):
     assert set(find(asha["headers"], q="v9.", status="released")) == {"v9.1.0"}
     assert find(asha["headers"], q="v9.")["v9.1.0"]["matched_tickets"] == []  # matched by name only
     assert find(zed["headers"], q="v9.") == {}  # not a member of PAY
+
+
+# --------------------------------------------------------------------------- #
+# Project files
+# --------------------------------------------------------------------------- #
+def test_project_files(client, admin, world):
+    ravi, asha, kiran, zed = world["ravi"], world["asha"], world["kiran"], world["zed"]
+    pay = world["pay"]
+    base = f"{API}/projects/{pay['id']}"
+
+    # members make folders and upload; outsiders can't see anything
+    specs = client.post(f"{base}/folders", headers=asha["headers"], json={"name": "Specs"}).json()
+    assert client.post(f"{base}/folders", headers=kiran["headers"], json={"name": "specs"}).status_code == 409
+    api_docs = client.post(f"{base}/folders", headers=asha["headers"], json={"name": "API", "parent_id": specs["id"]}).json()
+    up = client.post(f"{base}/files", headers=asha["headers"], data={"folder_id": str(api_docs["id"])},
+                     files=[("files", ("refunds.md", b"# Refunds", "text/markdown")), ("files", ("flow.txt", b"a->b", "text/plain"))])
+    assert up.status_code == 201, up.text
+    refunds, flow = up.json()
+    top = client.post(f"{base}/files", headers=kiran["headers"], files=[("files", ("notes.txt", b"hi", "text/plain"))]).json()[0]
+    assert client.post(f"{base}/files", headers=kiran["headers"], files=[("files", ("x.exe", b"MZ", "application/octet-stream"))]).status_code == 400
+    assert client.get(f"{base}/files", headers=zed["headers"]).status_code == 404
+    assert client.get(f"{API}/files/{refunds['id']}/download", headers=zed["headers"]).status_code == 404
+
+    # browse: top level, a folder with its path, search across the project
+    root = client.get(f"{base}/files", headers=kiran["headers"]).json()
+    assert [f["name"] for f in root["folders"]] == ["Specs"] and [f["filename"] for f in root["files"]] == ["notes.txt"]
+    assert root["folders"][0]["folder_count"] == 1 and not root["folders"][0]["can_edit"]
+    inner = client.get(f"{base}/files", headers=kiran["headers"], params={"folder_id": api_docs["id"]}).json()
+    assert [c["name"] for c in inner["path"]] == ["Specs", "API"] and len(inner["files"]) == 2
+    found = client.get(f"{base}/files", headers=kiran["headers"], params={"q": "refund"}).json()
+    assert [f["filename"] for f in found["files"]] == ["refunds.md"] and [c["name"] for c in found["files"][0]["path"]] == ["Specs", "API"]
+    assert client.get(f"{API}/files/{refunds['id']}/download", headers=kiran["headers"]).content == b"# Refunds"
+
+    # only the uploader / folder creator or an owner may change things
+    assert client.patch(f"{API}/files/{refunds['id']}", headers=kiran["headers"], json={"filename": "x.md"}).status_code == 403
+    assert client.patch(f"{API}/files/{refunds['id']}", headers=asha["headers"], json={"filename": "refund-flow.md", "folder_id": None}).json()["folder_id"] is None
+    assert client.patch(f"{API}/folders/{specs['id']}", headers=asha["headers"], json={"parent_id": api_docs["id"]}).status_code == 400
+    assert client.patch(f"{API}/folders/{api_docs['id']}", headers=ravi["headers"], json={"name": "Contracts", "parent_id": None}).json()["parent_id"] is None
+    assert client.delete(f"{API}/files/{top['id']}", headers=asha["headers"]).status_code == 403
+
+    # a project file can be attached to a ticket (as a copy)
+    t = raise_ticket(client, ravi["headers"], pay["id"], title="Needs the spec", assignee_id=asha["id"])
+    att = client.post(f"{API}/tickets/{t['id']}/attachments/from-files", headers=kiran["headers"], json={"file_ids": [refunds["id"]]})
+    assert att.status_code == 201 and att.json()[0]["filename"] == "refund-flow.md"
+    assert client.get(f"{API}/attachments/{att.json()[0]['id']}/download", headers=kiran["headers"]).content == b"# Refunds"
+    ops_t = raise_ticket(client, admin, world["ops"]["id"], title="Other project")
+    assert client.post(f"{API}/tickets/{ops_t['id']}/attachments/from-files", headers=admin, json={"file_ids": [refunds["id"]]}).status_code == 404
+    # ...and every ticket attachment shows up in the Files section
+    assert client.get(f"{base}/files", headers=kiran["headers"]).json()["ticket_attachment_count"] >= 1
+    listed = client.get(f"{base}/ticket-attachments", headers=kiran["headers"], params={"q": "refund"}).json()
+    assert listed[0]["ticket_key"] == t["key"] and listed[0]["ticket_title"] == "Needs the spec"
+
+    # deleting a folder takes its contents (and the stored files) with it
+    contracts = client.get(f"{base}/files", headers=asha["headers"], params={"folder_id": api_docs["id"]}).json()
+    folder_dir = Path(settings.UPLOAD_DIR) / "project-files" / str(pay["id"])
+    assert len(contracts["files"]) == 1 and len(list(folder_dir.iterdir())) == 3
+    client.post(f"{base}/files", headers=kiran["headers"], data={"folder_id": str(api_docs["id"])}, files=[("files", ("k.txt", b"k", "text/plain"))])
+    assert client.delete(f"{API}/folders/{api_docs['id']}", headers=asha["headers"]).status_code == 403  # holds Kiran's file
+    assert client.delete(f"{API}/folders/{api_docs['id']}", headers=ravi["headers"]).status_code == 204
+    assert client.get(f"{API}/files/{flow['id']}/download", headers=ravi["headers"]).status_code == 404
+    assert client.get(f"{API}/files/{refunds['id']}/download", headers=ravi["headers"]).status_code == 200  # moved out earlier
+    assert len(list(folder_dir.iterdir())) == 2  # flow.txt and k.txt removed from disk

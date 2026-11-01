@@ -2814,3 +2814,46 @@ body.pv-open { overflow: hidden; }
   to { transform: translate(var(--dx), calc(var(--dy) * -1.4)) rotate(var(--r)); opacity: 0; }
 }
 .plain-link, .plain-link:hover { color: inherit; text-decoration: none; }
+
+/* ============================================================================ project files */
+.files-zone { position: relative; display: flex; flex-direction: column; gap: 12px; }
+.files-toolbar { justify-content: space-between; gap: 10px; }
+.files-actions { gap: 8px; }
+.files-crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; font-size: 14px; }
+.files-crumbs .sep { color: var(--muted); }
+.link-btn { display: inline-flex; align-items: center; gap: 5px; padding: 2px 4px; border: 0; border-radius: 6px; background: none; color: var(--accent); font: inherit; cursor: pointer; }
+.link-btn:hover { background: var(--accent-soft); }
+.link-btn.muted { color: var(--muted); padding: 0; }
+.files-table { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.files-table th:first-child { width: 50%; }
+.files-row { cursor: pointer; }
+.files-row:hover { background: var(--surface-2); }
+.files-name { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.files-name > div { display: flex; flex-direction: column; min-width: 0; align-items: flex-start; }
+.files-filename { font-weight: 500; overflow-wrap: anywhere; }
+.files-ic { display: grid; place-items: center; width: 34px; height: 34px; flex: none; border-radius: 8px; color: #b7791f; background: color-mix(in srgb, #f6c344 22%, var(--surface)); }
+.files-ic.tickets { color: var(--accent); background: var(--accent-soft); }
+.files-row-actions { white-space: nowrap; }
+.files-row-actions .icon-btn { opacity: .55; }
+.files-row:hover .files-row-actions .icon-btn, .files-row-actions .icon-btn:focus-visible { opacity: 1; }
+.icon-btn.danger:hover { color: var(--danger); background: var(--danger-soft); }
+.files-ticket { display: inline-flex; gap: 8px; max-width: 320px; min-width: 0; color: var(--text); }
+.files-ticket .key { color: var(--accent); font-weight: 600; flex: none; }
+.files-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 48px 16px; text-align: center; color: var(--muted); border: 2px dashed var(--border); border-radius: var(--radius); cursor: pointer; }
+.files-empty strong { color: var(--text); }
+.files-empty:hover { border-color: var(--accent); }
+.files-drop-hint { display: none; position: absolute; inset: 0; z-index: 5; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent-soft) 88%, transparent); border: 2px dashed var(--accent); border-radius: var(--radius); pointer-events: none; }
+.files-zone.dragging .files-drop-hint { display: flex; }
+.files-from { margin: 10px 0; }
+.files-pick .folder-pick { width: 100%; font: inherit; color: var(--text); text-align: left; background: none; border: 0; border-bottom: 1px solid var(--border); cursor: pointer; }
+.files-pick .folder-pick:hover { background: var(--surface-2); }
+.form-actions.between { justify-content: space-between; align-items: center; }
+@media (max-width: 700px) { .files-row-actions .icon-btn { opacity: 1; } .files-table th:first-child { width: auto; } }
+
+/* ============================================================================ release ticket picker */
+.rel-pick-filters { gap: 8px; }
+.rel-pick-filters select { max-width: 180px; }
+.rel-pick-actions { justify-content: space-between; align-items: center; }
+.pick-row[hidden] { display: none; }
+.form > .search-box { flex: none; max-width: none; }

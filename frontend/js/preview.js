@@ -1,4 +1,4 @@
-// In-app file preview for ticket attachments, upcoming-task documents and chat files.
+// In-app file preview for ticket attachments, project files, upcoming-task documents and chat files.
 // Images (zoom), PDF, video/audio, Markdown, code & text (highlighted), CSV/Excel (tables),
 // Word (.docx). Everything else gets a clear "download" card. Files are fetched with the
 // user's token and shown from a local blob URL; HTML/SVG are never rendered as pages.
@@ -74,6 +74,7 @@ export const files = {
   attachment: (a, meta) => source(`/attachments/${a.id}/download`, a.filename, a.size, a.content_type, meta),
   upcomingDoc: (d, meta) => source(`/upcoming-documents/${d.id}/download`, d.filename, d.size, d.content_type, meta),
   chat: (f, meta) => source(`/chat/files/${f.id}`, f.filename, f.size, f.content_type, meta),
+  projectFile: (f, meta) => source(`/files/${f.id}/download`, f.filename, f.size, f.content_type, meta),
 };
 
 /** A blob with the right type for its extension (the server sends some files as octet-stream). */

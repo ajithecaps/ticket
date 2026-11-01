@@ -24,6 +24,7 @@ import { desktopShell, renderDesktop } from "./views/desktop.js";
 import { refreshChallengeDot, renderChallenge } from "./views/challenge.js";
 import { renderPerson, renderProfile } from "./views/profile.js";
 import { coachButton } from "./views/coach.js";
+import { renderFilesPage } from "./views/files.js";
 
 const root = document.getElementById("app");
 const isAdmin = () => auth.user?.role === "admin";
@@ -34,11 +35,12 @@ const routes = [
   [/^\/tickets$/, renderTickets],
   [/^\/tickets\/([A-Za-z][A-Za-z0-9]{1,9}-\d+)$/, (el, [key]) => renderTicket(el, key)],
   [/^\/projects$/, renderProjects],
-  [/^\/projects\/(\d+)(?:\/(board|list|sprints|timeline|docs|upcoming|releases|members|settings))?$/, (el, [id, tab]) => renderProject(el, Number(id), tab || "board")],
+  [/^\/projects\/(\d+)(?:\/(board|list|sprints|timeline|docs|files|upcoming|releases|members|settings))?$/, (el, [id, tab]) => renderProject(el, Number(id), tab || "board")],
   [/^\/notifications$/, renderNotifications],
   [/^\/desktop$/, renderDesktop],
   [/^\/challenge$/, renderChallenge],
   [/^\/profile$/, renderProfile],
+  [/^\/files$/, renderFilesPage],
   [/^\/people\/(\d+)$/, (el, [id]) => renderPerson(el, Number(id))],
   [/^\/chat(?:\/(\d+))?$/, (el, [id]) => renderChat(el, [id])],
   [/^\/users$/, renderUsers, true],
@@ -151,6 +153,7 @@ function navSections() {
       { href: "/upcoming", label: "Upcoming", icon: "clipboard", keys: "G U" },
       { href: "/releases", label: "Releases", icon: "rocket", keys: "G R" },
       { href: "/docs", label: "Docs", icon: "docs", keys: "G O" },
+      { href: "/files", label: "Files", icon: "folder", keys: "G F" },
     ]],
   ];
   if (isAdmin()) {

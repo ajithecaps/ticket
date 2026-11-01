@@ -222,5 +222,9 @@ def remove_file(path: Path) -> None:
         pass
 
 
+def project_files_dir(project_id: int) -> Path:
+    return Path(settings.UPLOAD_DIR) / "project-files" / str(project_id)
+
+
 def remove_ticket_files(ticket_id: int) -> None:
     shutil.rmtree(ticket_upload_dir(ticket_id), ignore_errors=True)

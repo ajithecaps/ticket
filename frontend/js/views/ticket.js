@@ -10,6 +10,7 @@ import {
   toDateInput, toast, typeBadge, userChip, assigneesPicker,
 } from "../ui.js";
 import { cheerIfMine } from "./coach.js";
+import { attachFromFilesDialog } from "./files.js";
 
 // ----------------------------------------------------------------------------- create
 /**
@@ -568,6 +569,8 @@ async function files(el, t, onChange) {
   };
 
   clear(el, drop, input,
+    h("div.row.files-from", h("button.btn.sm", { type: "button", onclick: () => attachFromFilesDialog(t, async () => { await onChange(); await files(el, t, onChange); }) },
+      icon("folder", { size: 14 }), "Attach from project files")),
     list.length
       ? attachmentCards(list, (a) => a.uploader.id === auth.user.id || t.can_delete, remove)
       : h("p.muted.pad", "No files attached."));
