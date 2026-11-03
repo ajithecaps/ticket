@@ -1999,3 +1999,37 @@ def _solve_lights(board):
         if not any(b):
             return presses
     raise AssertionError("unsolvable")
+
+
+def test_halloween_gift(client, admin, world, monkeypatch):
+    from datetime import date
+    from app.routers import challenge as ch, seasonal
+    asha, kiran = world["asha"], world["kiran"]
+    S, C = f"{API}/seasonal", f"{API}/challenge"
+    day = {"d": date(2026, 11, 20)}
+    monkeypatch.setattr(ch, "today", lambda: day["d"])
+    monkeypatch.setattr(seasonal, "today", lambda: day["d"])
+
+    # out of season: nothing to see or open
+    assert client.get(S, headers=asha["headers"]).json() == {"event": None}
+    assert client.post(f"{S}/open", headers=asha["headers"]).status_code == 404
+
+    # Halloween: everyone gets the greeting in their inbox (once) and a wrapped gift
+    day["d"] = date(2026, 11, 1)
+    s = client.get(S, headers=asha["headers"]).json()
+    assert s["event"]["id"] == "halloween-2026" and s["gift"] == {"opened": False} and s["opened_count"] == 0
+    client.get(S, headers=asha["headers"])
+    notes = [n for n in client.get(f"{API}/notifications", headers=asha["headers"]).json()["items"] if n["type"] == "announcement"]
+    assert len(notes) == 1 and "Happy Halloween" in notes[0]["message"]
+
+    # opening reveals the same treat every time and gives the badge + bonus points
+    r = client.post(f"{S}/open", headers=asha["headers"]).json()
+    treat, points = r["gift"]["treat"]["key"], r["gift"]["points"]
+    assert r["gift"]["opened"] and points == seasonal.TREAT[treat][3] and r["badge"]["label"] == "Halloween 2026"
+    assert client.post(f"{S}/open", headers=asha["headers"]).json()["gift"] == r["gift"]
+    assert client.get(S, headers=kiran["headers"]).json()["opened_count"] == 1
+    week = client.get(f"{C}/leaderboard", headers=kiran["headers"], params={"period": "week"}).json()
+    me = next(row for row in week["rows"] if row["user"]["id"] == asha["id"])
+    assert me["bonus"] == points and me["points"] >= points  # on top of any challenge points that week
+    assert client.get(f"{API}/people/{asha['id']}", headers=kiran["headers"]).json()["badges"] == [{"emoji": "🎃", "label": "Halloween 2026"}]
+    assert client.get(f"{API}/people/{kiran['id']}", headers=asha["headers"]).json()["badges"] == []  # not opened yet

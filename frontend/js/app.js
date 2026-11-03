@@ -25,6 +25,7 @@ import { refreshChallengeDot, renderChallenge } from "./views/challenge.js";
 import { renderPerson, renderProfile } from "./views/profile.js";
 import { coachButton } from "./views/coach.js";
 import { renderFilesPage } from "./views/files.js";
+import { checkSeasonalGift } from "./views/seasonal.js";
 
 const root = document.getElementById("app");
 const isAdmin = () => auth.user?.role === "admin";
@@ -272,6 +273,7 @@ function renderShell() {
   })();
 
   refreshChallengeDot();
+  setTimeout(checkSeasonalGift, 800);
 
   // Mirror the unread count onto the sidebar "Inbox" item.
   const badge = root.querySelector(".inbox-count");

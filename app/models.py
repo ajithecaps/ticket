@@ -80,6 +80,7 @@ class NotificationType(str, enum.Enum):
     RELEASE = "release"
     SPRINT = "sprint"
     CHAT_MENTION = "chat_mention"
+    ANNOUNCEMENT = "announcement"  # a message to everyone (e.g. the Halloween greeting)
 
 
 class SprintStatus(str, enum.Enum):
@@ -748,6 +749,22 @@ class ChatSaved(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     message_id: Mapped[int] = mapped_column(ForeignKey("chat_messages.id", ondelete="CASCADE"), primary_key=True, index=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class SeasonalGift(Base):
+    """A seasonal treat (e.g. Halloween): one per person per event, opened once for bonus challenge points."""
+
+    __tablename__ = "seasonal_gifts"
+    __table_args__ = (UniqueConstraint("user_id", "event", name="uq_seasonal_gift_user_event"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    event: Mapped[str] = mapped_column(String(40))  # e.g. "halloween-2026"
+    treat: Mapped[str] = mapped_column(String(30))
+    points: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    opened_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    opened_day: Mapped[date | None] = mapped_column(Date, nullable=True)  # local day, for the leaderboards
 
 
 class ChallengeAttempt(Base):

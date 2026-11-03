@@ -2,6 +2,7 @@ import { api } from "../api.js";
 import { icon } from "../icons.js";
 import { navigate } from "../app.js";
 import { avatar, busy, clear, emptyState, h, spinner, timeAgo, toast } from "../ui.js";
+import { openSeasonal } from "./seasonal.js";
 
 const POLL_MS = 30_000;
 const listeners = new Set();
@@ -10,7 +11,7 @@ const changed = () => listeners.forEach((fn) => fn());
 function item(n, onOpen) {
   return h(`li.notif${n.is_read ? "" : ".unread"}`,
     h("button", { onclick: () => onOpen(n) },
-      avatar(n.actor, "sm"),
+      n.type === "announcement" ? h("span.avatar.sm.notif-emoji", "🎃") : avatar(n.actor, "sm"),
       h("div.notif-body",
         h("span", n.message),
         h("span.muted.small", n.ticket_key ? `${n.ticket_key} · ` : "", timeAgo(n.created_at))),
@@ -25,6 +26,7 @@ async function open(n) {
   else if (n.type === "upcoming") navigate("/upcoming");
   else if (n.type === "release") navigate("/releases");
   else if (n.type === "chat_mention") navigate("/chat");
+  else if (n.type === "announcement") openSeasonal();
 }
 
 /** Topbar bell: unread badge (polled) plus a dropdown with the latest few. */

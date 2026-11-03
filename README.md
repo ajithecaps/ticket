@@ -630,6 +630,15 @@ Sidebar › **Daily challenge** (or `G C`) has one puzzle a day, the same for ev
 - **Marking:** right-click a room, or use Mark mode on touch screens, to put a 🕯️ on a room you suspect.
 - **Changing the dates:** they are set by `HALLOWEEN` in `app/routers/challenge.py`.
 
+**Halloween gift 🎁:** on the same dates, everyone who opens Grandesk gets a Halloween message from the Grandesk team. It arrives as an Inbox item and as a popup with a gift box.
+
+- **The treat:** tapping the box reveals a random treat: candy, chocolate, a lucky potion, a friendly ghost or a rare golden pumpkin.
+- **What it's worth:** 5–15 bonus daily-challenge points, counted on the week, month and all-time boards (shown as 🎁 +n), plus a **🎃 Halloween <year>** badge on the person's profile.
+- **One per person:** each person gets one gift a year, and the treat is fixed per person, so it can't be re-rolled.
+- **Reopening:** the Inbox message reopens the popup.
+- **Slack:** the greeting is in-app only; nothing is posted to Slack.
+- **Code:** `app/routers/seasonal.py` (message text and treats).
+
 - **One try a day:** you get one attempt, with a 15-minute limit. The new puzzle arrives at midnight in `TIMEZONE`.
 - **Fair play:** the server keeps the clock and checks every move. Cards and haunted rooms are revealed one at a time, answers (words, codes, numbers) never reach the browser until the game ends, and slide and lights-out moves are replayed on the server. A result can't be typed in from the browser console.
 - **Leaderboards:**

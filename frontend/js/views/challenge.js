@@ -101,7 +101,7 @@ export async function renderChallenge(main) {
         period === "today"
           ? [who(r.user, h("span.muted.small", r.penalty_ms ? `${fmtTime(r.duration_ms)} ${penaltyText(r.penalty_ms)}` : `${r.moves} moves`, r.streak > 1 ? ` · 🔥 ${r.streak}` : "")),
             h("div.ch-score", h("strong", fmtTime(r.score_ms)), h("span.ch-points", `+${r.points}`))]
-          : [who(r.user, h("span.muted.small", `${r.solved} solved`, r.wins ? ` · 🏆 ${r.wins}` : "", r.streak > 1 ? ` · 🔥 ${r.streak}` : "")),
+          : [who(r.user, h("span.muted.small", `${r.solved} solved`, r.wins ? ` · 🏆 ${r.wins}` : "", r.bonus ? ` · 🎁 +${r.bonus}` : "", r.streak > 1 ? ` · 🔥 ${r.streak}` : "")),
             h("div.ch-score", h("strong", `${r.points}`), h("span.muted.small", "pts"))]))),
       playingNow(data));
   }

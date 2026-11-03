@@ -89,6 +89,7 @@ class PersonProfile(ProfileOut):
 
     stats: PersonStats
     shared_projects: list["ProjectBrief"] = []
+    badges: list[dict] = []  # e.g. {"emoji": "🎃", "label": "Halloween 2026"} from seasonal gifts
 
 
 class UserCreate(BaseModel):

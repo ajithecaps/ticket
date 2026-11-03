@@ -22,7 +22,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from ..config import settings
 from ..deps import CurrentUser, DbSession
 from ..jobs import tz
-from ..models import ChallengeAttempt, User
+from ..models import ChallengeAttempt, SeasonalGift, User
 from ..utils import utcnow
 
 router = APIRouter(prefix="/challenge", tags=["Daily challenge"])
@@ -733,6 +733,13 @@ def leaderboard(user: CurrentUser, db: DbSession, period: str = Query("today", p
             s["solved"] += 1
             s["wins"] += i == 0
             s["podiums"] += i < 3
+    # seasonal gifts (e.g. the Halloween treat) add bonus points on the day they were opened
+    gifts = db.execute(select(SeasonalGift, User).join(User, User.id == SeasonalGift.user_id).where(
+        SeasonalGift.opened_day >= start_day, SeasonalGift.opened_day <= t)).all()
+    for g, u in gifts:
+        s = stats.setdefault(u.id, {"user": _user(u), "points": 0, "solved": 0, "wins": 0, "podiums": 0})
+        s["points"] += g.points
+        s["bonus"] = s.get("bonus", 0) + g.points
     streaks = _streaks(db, set(stats))
     rows = sorted(stats.values(), key=lambda s: (-s["points"], -s["wins"], -s["solved"], s["user"]["name"].lower()))
     for i, s in enumerate(rows):

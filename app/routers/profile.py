@@ -16,6 +16,7 @@ from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile,
 from sqlalchemy import select
 
 from .. import coach
+from .seasonal import badges_for
 from ..deps import CurrentUser, DbSession
 from ..models import Project, ProjectMember, TicketStatus, User, UserAvatar
 from ..permissions import is_admin
@@ -166,6 +167,7 @@ def person(user_id: int, user: CurrentUser, db: DbSession):
             streak=coach.streak_from(set(days), today),
         ),
         "shared_projects": [ProjectBrief.model_validate(p) for p in shared],
+        "badges": badges_for(db, other.id),
     })
     if other.id != user.id:  # the coach is personal
         out.coach_enabled, out.coach_name, out.coach_tone, out.daily_goal = True, "Spark", "cheerful", 2

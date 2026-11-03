@@ -68,6 +68,7 @@ function profileCard(p, { me = false } = {}) {
         p.designation ? h("span.muted", p.designation) : me ? h("span.muted.small", "Add your title") : null)),
     p.bio ? h("p.profile-bio", p.bio) : me ? h("p.profile-bio.muted", "Tell your team a little about yourself.") : null,
     p.skills?.length ? h("div.skill-chips.view", p.skills.map((s) => h("span.skill", s))) : null,
+    p.badges?.length ? h("div.profile-badges", p.badges.map((b) => h("span.profile-badge", { title: b.label }, b.emoji, " ", b.label))) : null,
     h("ul.profile-facts",
       h("li", icon("mail", { size: 15 }), h("a", { href: `mailto:${p.email}` }, p.email)),
       p.phone && h("li", icon("phone", { size: 15 }), h("a", { href: `tel:${p.phone.replace(/[^+\d]/g, "")}` }, p.phone)),
