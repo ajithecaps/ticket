@@ -1565,8 +1565,9 @@ def test_daily_challenge(client, admin, world, monkeypatch):
     from app.routers import challenge as ch
     asha, kiran, zed = world["asha"], world["kiran"], world["zed"]
     C = f"{API}/challenge"
-    base = date(2026, 3, 2)
+    base = next(date(2026, 3, 1) + timedelta(days=i) for i in range(8) if ch.kind_for(date(2026, 3, 1) + timedelta(days=i)) == "match")
     day_of = {ch.kind_for(base + timedelta(days=i)): base + timedelta(days=i) for i in range(4)}
+    assert set(day_of) == {"match", "slide", "words", "math"}  # four days in a row
     play_day = {"d": day_of["match"]}
     monkeypatch.setattr(ch, "today", lambda: play_day["d"])
 
@@ -1897,3 +1898,104 @@ def test_project_files(client, admin, world):
     assert client.get(f"{API}/files/{flow['id']}/download", headers=ravi["headers"]).status_code == 404
     assert client.get(f"{API}/files/{refunds['id']}/download", headers=ravi["headers"]).status_code == 200  # moved out earlier
     assert len(list(folder_dir.iterdir())) == 2  # flow.txt and k.txt removed from disk
+
+
+def test_more_challenge_games(client, admin, world, monkeypatch):
+    from datetime import date, timedelta
+    from app.routers import challenge as ch
+    asha, kiran = world["asha"], world["kiran"]
+    C = f"{API}/challenge"
+    first = lambda kind: next(date(2026, 3, 1) + timedelta(days=i) for i in range(16) if ch.kind_for(date(2026, 3, 1) + timedelta(days=i)) == kind)
+    play_day = {"d": first("wordle")}
+    monkeypatch.setattr(ch, "today", lambda: play_day["d"])
+
+    # --- dev wordle: colours per letter (duplicates handled), wrong guesses cost 10 s, answer hidden until the end
+    assert ch._wordle_marks("LEVEL", "HELLO") == ["near", "hit", "miss", "miss", "near"]
+    assert ch._wordle_marks("ALLOY", "HELLO") == ["miss", "near", "hit", "near", "miss"]
+    p = client.post(f"{C}/today/start", headers=asha["headers"]).json()["puzzle"]
+    word = ch.puzzle(play_day["d"])["word"]
+    assert p == {"length": 5, "tries": 6, "guesses": []}
+    assert client.post(f"{C}/today/guess", headers=asha["headers"], json={"guess": "abc"}).status_code == 400
+    wrong = "ZZZZZ" if word != "ZZZZZ" else "YYYYY"
+    r = client.post(f"{C}/today/guess", headers=asha["headers"], json={"guess": wrong}).json()
+    assert r["entry"]["marks"] == ["miss"] * 5 and "answer" not in r and r["attempt"]["penalty_ms"] == 10_000
+    r = client.post(f"{C}/today/guess", headers=asha["headers"], json={"guess": word.lower()}).json()
+    assert r["solved"] and r["attempt"]["solved"] and r["attempt"]["penalty_ms"] == 10_000 and r["answer"] == word
+    # six misses and it's over (unsolved), with the word revealed
+    client.post(f"{C}/today/start", headers=kiran["headers"])
+    for _ in range(6):
+        r = client.post(f"{C}/today/guess", headers=kiran["headers"], json={"guess": wrong}).json()
+    assert r["attempt"]["status"] == "done" and not r["attempt"]["solved"] and r["answer"] == word
+
+    # --- code breaker: ● / ○ feedback, every guess costs 5 s
+    assert ch._code_marks("1122", "1212") == {"exact": 2, "near": 2}
+    assert ch._code_marks("3456", "1212") == {"exact": 0, "near": 0}
+    play_day["d"] = first("code")
+    client.post(f"{C}/today/start", headers=asha["headers"])
+    code = ch.puzzle(play_day["d"])["code"]
+    assert client.post(f"{C}/today/guess", headers=asha["headers"], json={"guess": "1279"}).status_code == 400
+    r = client.post(f"{C}/today/guess", headers=asha["headers"], json={"guess": code}).json()
+    assert r["solved"] and r["entry"]["exact"] == 4 and r["attempt"]["penalty_ms"] == 5_000
+
+    # --- lights out: the presses are replayed on the server
+    play_day["d"] = first("lights")
+    board = client.post(f"{C}/today/start", headers=asha["headers"]).json()["puzzle"]["board"]
+    assert any(board)
+    presses = _solve_lights(board)
+    assert client.post(f"{C}/today/lights", headers=asha["headers"], json={"moves": presses[:-1]}).status_code == 400
+    assert client.post(f"{C}/today/lights", headers=asha["headers"], json={"moves": [25]}).status_code == 400
+    done = client.post(f"{C}/today/lights", headers=asha["headers"], json={"moves": presses}).json()["attempt"]
+    assert done["solved"] and done["moves"] == len(presses)
+
+    # --- number sequences: like the math sprint, one at a time
+    play_day["d"] = first("seq")
+    p = client.post(f"{C}/today/start", headers=asha["headers"]).json()["puzzle"]
+    qs = ch.puzzle(play_day["d"])["questions"]
+    assert len(p["questions"]) == 6 and all(q.endswith(", ?") for q in p["questions"])
+    assert client.post(f"{C}/today/answer", headers=asha["headers"], json={"item": 0, "answer": str(qs[0]["a"] + 1)}).json()["correct"] is False
+    for i, q in enumerate(qs):
+        last = client.post(f"{C}/today/answer", headers=asha["headers"], json={"item": i, "answer": str(q["a"])}).json()
+    assert last["attempt"]["solved"] and last["attempt"]["penalty_ms"] == 5_000
+
+    # --- haunted house: it takes over the Halloween fortnight
+    assert ch.kind_for(date(2026, 10, 31)) == ch.kind_for(date(2026, 11, 7)) == ch.kind_for(date(2026, 10, 24)) == "haunted"
+    assert ch.kind_for(date(2026, 11, 8)) != "haunted" and ch.kind_for(date(2026, 10, 23)) != "haunted"
+    play_day["d"] = date(2026, 10, 31)
+    info = client.get(f"{C}/today", headers=asha["headers"]).json()
+    assert info["kind"] == "haunted" and info["halloween"]
+    p = client.post(f"{C}/today/start", headers=asha["headers"]).json()["puzzle"]
+    hp = ch.puzzle(play_day["d"])
+    ghosts, pumpkins = set(hp["ghosts"]), set(hp["pumpkins"])
+    assert p["size"] == 7 and p["cells"] and not any(c.get("ghost") for c in p["cells"].values())  # a free, safe start
+    assert "all_ghosts" not in p and not (set(map(int, p["cells"])) & pumpkins)
+    boo = client.post(f"{C}/today/reveal", headers=asha["headers"], json={"index": min(ghosts)}).json()
+    assert boo["boo"] and boo["attempt"]["penalty_ms"] == 15_000
+    assert client.post(f"{C}/today/reveal", headers=asha["headers"], json={"index": min(ghosts)}).status_code == 400
+    opened = set(map(int, p["cells"])) | {min(ghosts)}
+    for i in range(49):
+        if i in ghosts or i in opened:
+            continue
+        r = client.post(f"{C}/today/reveal", headers=asha["headers"], json={"index": i}).json()
+        opened |= set(map(int, r["cells"]))
+    assert r["attempt"]["solved"] and sorted(r["all_ghosts"]) == sorted(ghosts)
+    assert r["attempt"]["penalty_ms"] == 15_000 - 5_000 * len(pumpkins)  # two lucky pumpkins
+
+
+def _solve_lights(board):
+    """Lights out on 5x5: brute-force the first row, chase the lights down, check the last row."""
+    from itertools import product
+    from app.routers.challenge import _light_group
+    for first in product([0, 1], repeat=5):
+        b, presses = board[:], [i for i in range(5) if first[i]]
+        for i in presses:
+            for j in _light_group(i):
+                b[j] ^= 1
+        for row in range(1, 5):
+            for col in range(5):
+                if b[(row - 1) * 5 + col]:
+                    presses.append(row * 5 + col)
+                    for j in _light_group(row * 5 + col):
+                        b[j] ^= 1
+        if not any(b):
+            return presses
+    raise AssertionError("unsolvable")

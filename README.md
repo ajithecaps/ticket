@@ -610,7 +610,7 @@ Calls in the app need the server on **HTTPS**, the same as in a browser.
 
 ## Daily challenge
 
-Sidebar › **Daily challenge** (or `G C`) has one puzzle a day, the same for everyone. The fastest time wins. Four kinds rotate day by day:
+Sidebar › **Daily challenge** (or `G C`) has one puzzle a day, the same for everyone. The fastest time wins. Eight kinds rotate day by day:
 
 | Puzzle | How it works | Penalty |
 |---|---|---|
@@ -618,9 +618,20 @@ Sidebar › **Daily challenge** (or `G C`) has one puzzle a day, the same for ev
 | Slide | Order the tiles 1–8 (click or arrow keys) | none |
 | Dev Words | Unscramble 5 developer words | +20 s per skipped word |
 | Math Sprint | 10 sums, getting harder | +5 s per wrong answer |
+| Dev Wordle | Guess a 5-letter tech word in 6 tries; green = right spot, yellow = in the word | +10 s per wrong guess |
+| Code Breaker | Crack a 4-digit code (digits 1–6) in 10 tries; ● right place, ○ wrong place | +5 s per guess |
+| Lights Out | Switch off a 5×5 grid; each press flips a light and its four neighbours | none |
+| Number Sequences | Find the next number in 6 sequences, getting harder | +5 s per wrong answer |
+
+**Halloween fortnight 🎃:** from 24 October to 7 November every day is the **Haunted House** instead of the rotation, and the challenge card turns spooky, with a moon and bats.
+
+- **The game:** a 7×7 house hides 7 ghosts, and each day's house is different. You start with a free safe area open, and an opened room shows how many ghosts are in the 8 rooms around it, as in Minesweeper.
+- **Scoring:** walking into a ghost doesn't end the game; it costs **BOO! +15 s**. Two hidden lucky pumpkins take **5 s off** each.
+- **Marking:** right-click a room, or use Mark mode on touch screens, to put a 🕯️ on a room you suspect.
+- **Changing the dates:** they are set by `HALLOWEEN` in `app/routers/challenge.py`.
 
 - **One try a day:** you get one attempt, with a 15-minute limit. The new puzzle arrives at midnight in `TIMEZONE`.
-- **Fair play:** the server keeps the clock and checks every move. Cards are revealed one flip at a time, word and math answers never reach the browser, and slide moves are replayed on the server. A result can't be typed in from the browser console.
+- **Fair play:** the server keeps the clock and checks every move. Cards and haunted rooms are revealed one at a time, answers (words, codes, numbers) never reach the browser until the game ends, and slide and lights-out moves are replayed on the server. A result can't be typed in from the browser console.
 - **Leaderboards:**
   - **Today** ranks by time plus penalties. It also shows who is playing right now and is refreshed every 15 seconds.
   - **This week / This month / All time** add up points. Daily places 1–7 earn 10, 8, 6, 5, 4, 3 and 2 points, and anyone else who solves the puzzle gets 1. Ties are broken by wins.

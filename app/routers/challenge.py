@@ -1,13 +1,15 @@
 """Daily challenge: one puzzle a day, the same for everyone, timed by the server.
 
-The kind rotates daily (pair match, sliding tiles, developer words, math sprint). The server
+The kind rotates daily through eight games (pair match, sliding tiles, developer words, math sprint,
+dev wordle, code breaker, lights out, number sequences). Over the Halloween fortnight (24 Oct - 7 Nov)
+every day is the Haunted House ghost hunt instead. The server
 generates the puzzle from the date, keeps the clock and the progress, and checks every move, so a
 result can't be made up in the browser. Daily ranks give points (10, 8, 6, 5, 4, 3, 2, then 1 for
 solving), which add up on the weekly, monthly and all-time leaderboards.
 """
 import hashlib
 import random
-from collections import defaultdict
+from collections import Counter, defaultdict, deque
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -25,15 +27,25 @@ from ..utils import utcnow
 
 router = APIRouter(prefix="/challenge", tags=["Daily challenge"])
 
-KINDS = ["match", "slide", "words", "math"]
+KINDS = ["match", "slide", "words", "math", "wordle", "code", "lights", "seq"]
 INFO = {
     "match": ("Pair Match", "Flip two cards at a time and find all 10 pairs. Each miss adds 1 second."),
     "slide": ("Slide", "Slide the tiles into order, 1 to 8, with the gap in the bottom-right corner."),
     "words": ("Dev Words", "Unscramble 5 developer words. Skipping a word adds 20 seconds."),
     "math": ("Math Sprint", "Answer 10 sums as fast as you can. A wrong answer adds 5 seconds."),
+    "wordle": ("Dev Wordle", "Guess today's 5-letter tech word in 6 tries. Green: right spot, yellow: in the word. Each wrong guess adds 10 seconds."),
+    "code": ("Code Breaker", "Crack the 4-digit code (digits 1-6, repeats allowed) in 10 tries. ● right digit in the right place, ○ right digit in the wrong place. Each guess adds 5 seconds."),
+    "lights": ("Lights Out", "Switch every light off. Pressing a light flips it and its neighbours above, below, left and right."),
+    "seq": ("Number Sequences", "Find the next number in 6 sequences. A wrong answer adds 5 seconds."),
+    "haunted": ("Haunted House", "Explore the 7×7 haunted house and open every room that has no ghost. A number tells how many ghosts lurk next door. Walk into a ghost: BOO! +15 seconds. Lucky pumpkins take 5 seconds off. Right-click a room (or switch to Mark mode) to put a 🕯️ where you think a ghost hides."),
 }
 TIME_LIMIT = timedelta(minutes=15)
 MISS_MS, SKIP_MS, WRONG_MS = 1_000, 20_000, 5_000
+WORDLE_MS, CODE_MS, BOO_MS, PUMPKIN_MS = 10_000, 5_000, 15_000, -5_000
+WORDLE_TRIES, CODE_TRIES = 6, 10
+HAUNT_SIZE, HAUNT_GHOSTS, HAUNT_PUMPKINS = 7, 7, 2
+# Halloween fortnight: the haunted house replaces the rotation (month, day) inclusive.
+HALLOWEEN = ((10, 24), (11, 7))
 POINTS = [10, 8, 6, 5, 4, 3, 2]  # by daily rank; everyone else who solves it gets 1
 
 CARD_SYMBOLS = ["🐛", "🚀", "🔥", "💾", "🧪", "📦", "🔒", "⚙️", "🧠", "☕", "🐳", "🌿", "🦀", "🐍", "🎯", "💡", "🛰️", "🧩"]
@@ -48,6 +60,15 @@ WORDS = [
     "STORAGE", "BACKUP", "LOGGING", "METRICS", "ALERT", "CLOUD", "COOKIE", "SESSION", "PATCH", "VERSION", "PLUGIN",
 ]
 SOLVED_BOARD = [1, 2, 3, 4, 5, 6, 7, 8, 0]
+TECH5 = [
+    "ARRAY", "CACHE", "QUERY", "INDEX", "TOKEN", "PIXEL", "CLOUD", "PATCH", "STACK", "QUEUE", "MERGE", "LINUX",
+    "REGEX", "DEBUG", "BUILD", "CLASS", "ASYNC", "FETCH", "PARSE", "SHELL", "PROXY", "LOGIN", "ERROR", "FLOAT",
+    "TUPLE", "SCOPE", "YIELD", "MUTEX", "GRAPH", "BYTES", "CONST", "FRAME", "TABLE", "ROUTE", "EVENT", "INPUT",
+    "VALUE", "COUNT", "SPLIT", "TRACE", "STATE", "HOOKS", "STYLE", "MODAL", "PANEL", "CHART", "AGILE", "SCRUM",
+    "BOARD", "ALERT", "ADMIN", "TESTS", "MOCKS", "MACRO", "LAYER", "SPARK", "RELAY", "NGINX", "REDIS", "KAFKA",
+    "SWIFT", "TYPES", "SHARD", "NODES", "PORTS", "UNITY", "VIRUS", "LOGIC", "CRASH", "PIVOT",
+]
+TECH5 = [w for w in TECH5 if len(w) == 5 and w.isalpha()]
 
 
 # ----------------------------------------------------------------------------- the day's puzzle
@@ -55,7 +76,13 @@ def today() -> date:
     return datetime.now(tz()).date()
 
 
+def is_halloween(day: date) -> bool:
+    return HALLOWEEN[0] <= (day.month, day.day) <= HALLOWEEN[1]
+
+
 def kind_for(day: date) -> str:
+    if is_halloween(day):
+        return "haunted"
     return KINDS[day.toordinal() % len(KINDS)]
 
 
@@ -102,6 +129,23 @@ def puzzle(day: date) -> dict:
                 rng.shuffle(letters)
             scrambled.append("".join(letters))
         return {"words": words, "scrambled": scrambled}
+    if kind == "wordle":
+        return {"word": rng.choice(TECH5)}
+    if kind == "code":
+        return {"code": "".join(str(rng.randint(1, 6)) for _ in range(4))}
+    if kind == "lights":
+        # pressing random lights from "all off" gives a board that is always solvable
+        while True:
+            board = [0] * 25
+            for i in rng.sample(range(25), rng.randint(7, 10)):
+                for j in _light_group(i):
+                    board[j] ^= 1
+            if any(board):
+                return {"board": board}
+    if kind == "seq":
+        return {"questions": _sequences(rng)}
+    if kind == "haunted":
+        return _haunted(rng)
     questions = []
     for i in range(10):
         if i < 3:
@@ -127,13 +171,145 @@ def puzzle(day: date) -> dict:
     return {"questions": questions}
 
 
-def _initial_state(kind: str) -> dict:
+def _light_group(i: int) -> list[int]:
+    r, c = divmod(i, 5)
+    return [rr * 5 + cc for rr, cc in ((r, c), (r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)) if 0 <= rr < 5 and 0 <= cc < 5]
+
+
+def _sequences(rng: random.Random) -> list[dict]:
+    """Six "what comes next" sequences, easy to hard. Five terms are shown; the sixth is the answer."""
+    def arith():
+        a, d = rng.randint(2, 30), rng.randint(3, 13)
+        return [a + k * d for k in range(6)]
+
+    def alternating():
+        a, up = rng.randint(10, 40), rng.randint(6, 14)
+        down = rng.randint(2, up - 2)
+        out = [a]
+        for k in range(5):
+            out.append(out[-1] + (up if k % 2 == 0 else -down))
+        return out
+
+    def geometric():
+        a, r = rng.randint(1, 5), rng.choice([2, 3])
+        return [a * r ** k for k in range(6)]
+
+    def squares():
+        n, c = rng.randint(1, 6), rng.randint(0, 9)
+        return [(n + k) ** 2 + c for k in range(6)]
+
+    def fib():
+        out = [rng.randint(1, 6), rng.randint(2, 9)]
+        while len(out) < 6:
+            out.append(out[-1] + out[-2])
+        return out
+
+    def growing():
+        a, d, step = rng.randint(1, 20), rng.randint(1, 5), rng.randint(1, 3)
+        out = [a]
+        for k in range(5):
+            out.append(out[-1] + d + k * step)
+        return out
+
+    def double_plus():
+        a, k = rng.randint(1, 6), rng.choice([-1, 1, 2, 3])
+        out = [a]
+        while len(out) < 6:
+            out.append(out[-1] * 2 + k)
+        return out
+
+    def cubes():
+        n = rng.randint(1, 4)
+        return [(n + k) ** 3 for k in range(6)]
+
+    tiers = [[arith, alternating], [geometric, squares], [fib, growing], [double_plus, cubes]]
+    picks = [rng.choice(tiers[0]), rng.choice(tiers[1])]
+    picks += rng.sample(tiers[2], 2) if rng.random() < 0.5 else [rng.choice(tiers[2]), rng.choice(tiers[1])]
+    picks += [rng.choice(tiers[3]), rng.choice(tiers[2] + tiers[3])]
+    out = []
+    for make in picks:
+        terms = make()
+        out.append({"q": ", ".join(str(t) for t in terms[:5]) + ", ?", "a": terms[5]})
+    return out
+
+
+def _cell_neighbours(i: int, size: int = HAUNT_SIZE) -> list[int]:
+    r, c = divmod(i, size)
+    return [rr * size + cc for rr in (r - 1, r, r + 1) for cc in (c - 1, c, c + 1)
+            if (rr, cc) != (r, c) and 0 <= rr < size and 0 <= cc < size]
+
+
+def _flood(start: int, counts: list[int], ghosts: set[int]) -> list[int]:
+    """Rooms opened by stepping into `start`: an empty room (no ghosts next door) opens its neighbours too."""
+    seen, queue = {start}, deque([start])
+    while queue:
+        cur = queue.popleft()
+        if counts[cur] == 0:
+            for n in _cell_neighbours(cur):
+                if n not in seen and n not in ghosts:
+                    seen.add(n)
+                    queue.append(n)
+    return sorted(seen)
+
+
+def _haunted(rng: random.Random) -> dict:
+    cells = HAUNT_SIZE * HAUNT_SIZE
+    while True:
+        ghosts = set(rng.sample(range(cells), HAUNT_GHOSTS))
+        counts = [sum(n in ghosts for n in _cell_neighbours(i)) for i in range(cells)]
+        empty = [i for i in range(cells) if i not in ghosts and counts[i] == 0]
+        if not empty:
+            continue
+        start = rng.choice(empty)
+        opened = set(_flood(start, counts, ghosts))
+        hidden_safe = [i for i in range(cells) if i not in ghosts and i not in opened]
+        if len(hidden_safe) < 12:  # the free start shouldn't give the game away
+            continue
+        pumpkins = rng.sample(hidden_safe, HAUNT_PUMPKINS)
+        return {"ghosts": sorted(ghosts), "counts": counts, "start": start, "pumpkins": sorted(pumpkins)}
+
+
+def _initial_state(kind: str, day: date | None = None) -> dict:
+    if kind == "haunted":
+        p = puzzle(day)
+        return {"revealed": _flood(p["start"], p["counts"], set(p["ghosts"])), "boos": []}
     return {
         "match": {"open": [], "matched": []},
         "slide": {},
         "words": {"done": {}, "skipped": []},
         "math": {"current": 0, "wrong": 0},
+        "seq": {"current": 0, "wrong": 0},
+        "wordle": {"guesses": []},
+        "code": {"guesses": []},
+        "lights": {},
     }[kind]
+
+
+def _wordle_marks(guess: str, word: str) -> list[str]:
+    marks = ["miss"] * len(word)
+    left = Counter()
+    for i, (g, w) in enumerate(zip(guess, word)):
+        if g == w:
+            marks[i] = "hit"
+        else:
+            left[w] += 1
+    for i, g in enumerate(guess):
+        if marks[i] != "hit" and left[g] > 0:
+            marks[i] = "near"
+            left[g] -= 1
+    return marks
+
+
+def _code_marks(guess: str, code: str) -> dict:
+    exact = sum(g == c for g, c in zip(guess, code))
+    common = sum((Counter(guess) & Counter(code)).values())
+    return {"exact": exact, "near": common - exact}
+
+
+def _haunt_cell(p: dict, i: int) -> dict:
+    if i in p["ghosts"]:
+        return {"ghost": True}
+    return {"n": p["counts"][i], **({"pumpkin": True} if i in p["pumpkins"] else {})}
 
 
 def _public(att: ChallengeAttempt) -> dict:
@@ -150,6 +326,24 @@ def _public(att: ChallengeAttempt) -> dict:
         for i in st.get("skipped", []):
             done[str(i)] = p["words"][i]
         return {"scrambled": p["scrambled"], "done": done, "skipped": st.get("skipped", [])}
+    if att.kind == "wordle":
+        out = {"length": len(p["word"]), "tries": WORDLE_TRIES, "guesses": st.get("guesses", [])}
+        if att.finished_at is not None:
+            out["answer"] = p["word"]
+        return out
+    if att.kind == "code":
+        out = {"length": 4, "digits": 6, "tries": CODE_TRIES, "guesses": st.get("guesses", [])}
+        if att.finished_at is not None:
+            out["answer"] = p["code"]
+        return out
+    if att.kind == "lights":
+        return {"board": p["board"]}
+    if att.kind == "haunted":
+        shown = {str(i): _haunt_cell(p, i) for i in st.get("revealed", []) + st.get("boos", [])}
+        out = {"size": HAUNT_SIZE, "ghosts": HAUNT_GHOSTS, "pumpkins": HAUNT_PUMPKINS, "cells": shown}
+        if att.finished_at is not None:
+            out["all_ghosts"] = p["ghosts"]
+        return out
     return {"questions": [q["q"] for q in p["questions"]], "current": st.get("current", 0)}
 
 
@@ -256,6 +450,7 @@ def challenge_today(user: CurrentUser, db: DbSession):
     return {
         "day": day.isoformat(),
         "kind": kind,
+        "halloween": is_halloween(day),
         "title": INFO[kind][0],
         "rules": INFO[kind][1],
         "time_limit_s": int(TIME_LIMIT.total_seconds()),
@@ -274,7 +469,7 @@ def start(user: CurrentUser, db: DbSession):
     att = _mine(db, user, day)
     if att is None:
         kind = kind_for(day)
-        att = ChallengeAttempt(user_id=user.id, day=day, kind=kind, state=_initial_state(kind), started_at=utcnow())
+        att = ChallengeAttempt(user_id=user.id, day=day, kind=kind, state=_initial_state(kind, day), started_at=utcnow())
         db.add(att)
         try:
             db.commit()
@@ -325,7 +520,7 @@ class AnswerIn(BaseModel):
     answer: str = Field(max_length=40)
 
 
-@router.post("/today/answer", summary="Dev words / math sprint: check one answer")
+@router.post("/today/answer", summary="Dev words / math sprint / number sequences: check one answer")
 def answer(payload: AnswerIn, user: CurrentUser, db: DbSession):
     att = _playing(db, user)
     p = puzzle(att.day)
@@ -337,7 +532,7 @@ def answer(payload: AnswerIn, user: CurrentUser, db: DbSession):
         if correct:
             st["done"][str(payload.item)] = p["words"][payload.item]
         finished = len(st["done"]) + len(st["skipped"]) == len(p["words"])
-    elif att.kind == "math":
+    elif att.kind in ("math", "seq"):
         if payload.item != st["current"]:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Answer the current question")
         try:
@@ -401,6 +596,102 @@ def slide(payload: SlideIn, user: CurrentUser, db: DbSession):
     _finish(att)
     db.commit()
     return {"attempt": _attempt_out(db, att, with_puzzle=False)}
+
+
+class GuessIn(BaseModel):
+    guess: str = Field(min_length=1, max_length=10)
+
+
+@router.post("/today/guess", summary="Dev wordle / code breaker: make a guess")
+def guess(payload: GuessIn, user: CurrentUser, db: DbSession):
+    att = _playing(db, user)
+    p = puzzle(att.day)
+    st = att.state
+    g = payload.guess.strip().upper()
+    if att.kind == "wordle":
+        if len(g) != len(p["word"]) or not g.isascii() or not g.isalpha():
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Type a {len(p['word'])}-letter word")
+        entry = {"word": g, "marks": _wordle_marks(g, p["word"])}
+        solved, tries, cost = g == p["word"], WORDLE_TRIES, WORDLE_MS
+    elif att.kind == "code":
+        if len(g) != 4 or any(c not in "123456" for c in g):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Type 4 digits, each from 1 to 6")
+        entry = {"code": g, **_code_marks(g, p["code"])}
+        solved, tries, cost = g == p["code"], CODE_TRIES, CODE_MS
+    else:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Today's puzzle doesn't take guesses")
+    st["guesses"].append(entry)
+    att.moves += 1
+    if att.kind == "code" or not solved:
+        att.penalty_ms += cost  # wordle: wrong guesses cost; code breaker: every guess costs
+    if solved:
+        _finish(att)
+    elif len(st["guesses"]) >= tries:
+        _finish(att, solved=False)
+    flag_modified(att, "state")
+    db.commit()
+    out = {"entry": entry, "solved": solved, "attempt": _attempt_out(db, att, with_puzzle=False)}
+    if att.finished_at is not None:
+        out["answer"] = p["word"] if att.kind == "wordle" else p["code"]
+    return out
+
+
+class SolveIn(BaseModel):
+    moves: list[int] = Field(max_length=5000)
+
+
+@router.post("/today/lights", summary="Lights out: submit your presses (checked on the server)")
+def lights(payload: SolveIn, user: CurrentUser, db: DbSession):
+    att = _playing(db, user, "lights")
+    board = puzzle(att.day)["board"][:]
+    for i in payload.moves:
+        if not 0 <= i < 25:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Those presses aren't possible")
+        for j in _light_group(i):
+            board[j] ^= 1
+    if any(board):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Some lights are still on")
+    att.moves = len(payload.moves)
+    _finish(att)
+    db.commit()
+    return {"attempt": _attempt_out(db, att, with_puzzle=False)}
+
+
+class RevealIn(BaseModel):
+    index: int = Field(ge=0, le=HAUNT_SIZE * HAUNT_SIZE - 1)
+
+
+@router.post("/today/reveal", summary="Haunted house: open a room")
+def reveal(payload: RevealIn, user: CurrentUser, db: DbSession):
+    att = _playing(db, user, "haunted")
+    p = puzzle(att.day)
+    st = att.state
+    i = payload.index
+    if i in st["revealed"] or i in st["boos"]:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "That room is already open")
+    att.moves += 1
+    ghosts = set(p["ghosts"])
+    out = {"boo": i in ghosts, "pumpkins": 0, "cells": {}}
+    if out["boo"]:
+        st["boos"].append(i)
+        att.penalty_ms += BOO_MS
+        out["cells"][str(i)] = _haunt_cell(p, i)
+    else:
+        opened = [c for c in _flood(i, p["counts"], ghosts) if c not in st["revealed"]]
+        st["revealed"] += opened
+        for c in opened:
+            out["cells"][str(c)] = _haunt_cell(p, c)
+            if c in p["pumpkins"]:
+                out["pumpkins"] += 1
+                att.penalty_ms += PUMPKIN_MS
+    if len(st["revealed"]) == HAUNT_SIZE * HAUNT_SIZE - HAUNT_GHOSTS:
+        _finish(att)
+    flag_modified(att, "state")
+    db.commit()
+    out["attempt"] = _attempt_out(db, att, with_puzzle=False)
+    if att.finished_at is not None:
+        out["all_ghosts"] = p["ghosts"]
+    return out
 
 
 @router.post("/today/give-up", summary="Stop today's attempt (it won't score)")

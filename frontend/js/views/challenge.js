@@ -11,6 +11,11 @@ const KIND = {
   slide: { emoji: "🔢", blurb: "Logic" },
   words: { emoji: "🔤", blurb: "Words" },
   math: { emoji: "➗", blurb: "Numbers" },
+  wordle: { emoji: "🟩", blurb: "Words" },
+  code: { emoji: "🔐", blurb: "Logic" },
+  lights: { emoji: "💡", blurb: "Logic" },
+  seq: { emoji: "🔢", blurb: "Patterns" },
+  haunted: { emoji: "🎃", blurb: "Halloween special" },
 };
 const PERIODS = [["today", "Today"], ["week", "This week"], ["month", "This month"], ["all", "All time"]];
 const MEDAL = ["🥇", "🥈", "🥉"];
@@ -23,6 +28,11 @@ export function fmtTime(ms) {
   const m = Math.floor(t / 600);
   const s = Math.floor((t % 600) / 10);
   return `${m}:${String(s).padStart(2, "0")}.${t % 10}`;
+}
+
+/** "+12 s penalty" / "5 s bonus" for the time added (or taken off) on top of the clock. */
+function penaltyText(ms) {
+  return ms > 0 ? `+ ${Math.round(ms / 1000)} s penalty` : `− ${Math.round(-ms / 1000)} s bonus`;
 }
 
 function fmtCountdown(sec) {
@@ -46,7 +56,8 @@ export async function renderChallenge(main) {
   let timerRaf = 0;
   let pollTimer = 0;
 
-  const gameCard = h("section.card.ch-game");
+  const gameCard = h(`section.card.ch-game${info.halloween ? ".spooky" : ""}`);
+  let lastAnswer = null;
   const boardBody = h("div.ch-board-body");
   const tabs = h("div.chips.seg.ch-tabs", PERIODS.map(([key, label]) => h("button.chip", {
     type: "button", "aria-pressed": String(key === period), dataset: { p: key },
@@ -56,7 +67,10 @@ export async function renderChallenge(main) {
 
   clear(main,
     h("div.page-head",
-      h("div", h("h1", "Daily challenge"), h("p.muted", "A new puzzle every day - the same one for everyone. Fastest time wins; points add up over the week.")),
+      h("div", h("h1", "Daily challenge", info.halloween ? h("span.ch-halloween-tag", "🎃 Halloween fortnight") : null),
+        h("p.muted", info.halloween
+          ? "Spooky season! Until 7 November every day is a new haunted house - the same one for everyone. Fastest time wins."
+          : "A new puzzle every day - the same one for everyone. Fastest time wins; points add up over the week.")),
       streakEl),
     h("div.ch-layout",
       gameCard,
@@ -85,7 +99,7 @@ export async function renderChallenge(main) {
       h("ol.ch-rows", data.rows.map((r) => h(`li${r.user.id === meId ? ".me" : ""}${r.rank <= 3 ? ".podium" : ""}`,
         rank(r.rank),
         period === "today"
-          ? [who(r.user, h("span.muted.small", r.penalty_ms ? `${fmtTime(r.duration_ms)} + ${Math.round(r.penalty_ms / 1000)} s penalty` : `${r.moves} moves`, r.streak > 1 ? ` · 🔥 ${r.streak}` : "")),
+          ? [who(r.user, h("span.muted.small", r.penalty_ms ? `${fmtTime(r.duration_ms)} ${penaltyText(r.penalty_ms)}` : `${r.moves} moves`, r.streak > 1 ? ` · 🔥 ${r.streak}` : "")),
             h("div.ch-score", h("strong", fmtTime(r.score_ms)), h("span.ch-points", `+${r.points}`))]
           : [who(r.user, h("span.muted.small", `${r.solved} solved`, r.wins ? ` · 🏆 ${r.wins}` : "", r.streak > 1 ? ` · 🔥 ${r.streak}` : "")),
             h("div.ch-score", h("strong", `${r.points}`), h("span.muted.small", "pts"))]))),
@@ -101,9 +115,10 @@ export async function renderChallenge(main) {
     cancelAnimationFrame(timerRaf);
     const k = KIND[info.kind];
     const a = info.attempt;
-    if (!a) return renderIntro(k);
-    if (a.status === "playing") return renderPlaying(a);
-    return renderResult(a);
+    if (!a) renderIntro(k);
+    else if (a.status === "playing") renderPlaying(a);
+    else renderResult(a);
+    if (info.halloween && !gameCard.querySelector(".ch-bats")) gameCard.prepend(bats());
   }
 
   function renderIntro(k) {
@@ -136,7 +151,8 @@ export async function renderChallenge(main) {
     const pen = h("span.ch-penalty");
     const tick = () => {
       clock.textContent = fmtTime(performance.now() - t0);
-      pen.textContent = penalty ? `+${Math.round(penalty / 1000)} s` : "";
+      pen.textContent = penalty ? `${penalty > 0 ? "+" : "−"}${Math.round(Math.abs(penalty) / 1000)} s` : "";
+      pen.classList.toggle("bonus", penalty < 0);
       timerRaf = requestAnimationFrame(tick);
     };
     const area = h("div.ch-area");
@@ -166,7 +182,9 @@ export async function renderChallenge(main) {
       h("p.ch-rules.small", info.rules),
       area);
     tick();
-    ({ match: playMatch, slide: playSlide, words: playWords, math: playMath })[info.kind](area, a.puzzle, done);
+    ({ match: playMatch, slide: playSlide, words: playWords, math: playMath, wordle: playWordle, code: playCode, lights: playLights, seq: playSeq, haunted: playHaunted })[info.kind](area, a.puzzle, done, {
+      reveal: (answer) => { lastAnswer = answer; },
+    });
   }
 
   function renderResult(a) {
@@ -177,16 +195,17 @@ export async function renderChallenge(main) {
           h("div.ch-emoji", a.rank && a.rank <= 3 ? MEDAL[a.rank - 1] : "🎉"),
           h("span.ch-kicker", `${info.title} · solved`),
           h("div.ch-big", fmtTime(total)),
-          h("p.muted", a.penalty_ms ? `${fmtTime(a.duration_ms)} + ${Math.round(a.penalty_ms / 1000)} s penalties` : "No penalties - clean run!", ` · ${a.moves} moves`),
+          h("p.muted", a.penalty_ms ? `${fmtTime(a.duration_ms)} ${penaltyText(a.penalty_ms)}` : "No penalties - clean run!", ` · ${a.moves} moves`),
           a.rank ? h("p.ch-rank-line", `You're `, h("strong", `#${a.rank}`), ` today`, h("span.ch-points", `+${a.rank <= 7 ? [10, 8, 6, 5, 4, 3, 2][a.rank - 1] : 1} pts`)) : null,
           h("p.muted.small", `Come back tomorrow - next puzzle in ${fmtCountdown(info.next_in_s)}.`))
         : h("div.ch-result",
           h("div.ch-emoji", "⏱️"),
           h("span.ch-kicker", info.title),
           h("h2", "Not finished today"),
+          lastAnswer ? h("p.ch-answer", "The answer was ", h("strong", lastAnswer)) : null,
           h("p.muted", "No points this time - a new puzzle arrives tomorrow."),
           h("p.muted.small", `Next puzzle in ${fmtCountdown(info.next_in_s)}.`)));
-    if (a.solved && a.rank && a.rank <= 3) confetti(gameCard);
+    if (a.solved && a.rank && a.rank <= 3) confetti(gameCard, info.halloween);
   }
 
   render();
@@ -399,11 +418,272 @@ function playMath(area, puzzle, done) {
   setTimeout(() => input.focus(), 0);
 }
 
+/** Dev wordle: guesses are checked (and coloured) by the server; on-screen or physical keyboard. */
+function playWordle(area, puzzle, done, { reveal }) {
+  const n = puzzle.length;
+  const guesses = puzzle.guesses.slice();
+  let typed = "";
+  let sending = false;
+  const grid = h("div.ch-wordle", { style: { "--n": n } });
+  const keyState = {};
+  const RANK = { miss: 1, near: 2, hit: 3 };
+  const keys = h("div.ch-keys");
+  const rowsEl = Array.from({ length: puzzle.tries }, () => {
+    const row = h("div.ch-wrow", Array.from({ length: n }, () => h("span.ch-wtile")));
+    grid.append(row);
+    return row;
+  });
+  const paint = () => {
+    rowsEl.forEach((row, r) => {
+      const g = guesses[r];
+      [...row.children].forEach((tile, i) => {
+        tile.className = "ch-wtile";
+        if (g) { tile.textContent = g.word[i]; tile.classList.add(g.marks[i]); }
+        else if (r === guesses.length) { tile.textContent = typed[i] || ""; if (typed[i]) tile.classList.add("typed"); }
+        else tile.textContent = "";
+      });
+    });
+    guesses.forEach((g) => [...g.word].forEach((c, i) => { if ((RANK[g.marks[i]] || 0) > (RANK[keyState[c]] || 0)) keyState[c] = g.marks[i]; }));
+    keys.querySelectorAll("[data-k]").forEach((b) => { b.className = `ch-key ${keyState[b.dataset.k] || ""}`; });
+  };
+  async function submit() {
+    if (sending) return;
+    if (typed.length !== n) { shake(rowsEl[guesses.length]); return; }
+    sending = true;
+    try {
+      const r = await api.post("/challenge/today/guess", { guess: typed });
+      guesses.push(r.entry);
+      typed = "";
+      paint();
+      rowsEl[guesses.length - 1].classList.add("flip");
+      if (r.answer) reveal(r.answer);
+      if (r.solved) sounds.sent();
+      setTimeout(() => done(r.attempt), r.attempt.status === "done" ? 900 : 0);
+    } catch (err) { shake(rowsEl[guesses.length]); toast(err.message, "error"); } finally { sending = false; }
+  }
+  const press = (k) => {
+    if (k === "ENTER") submit();
+    else if (k === "⌫") { typed = typed.slice(0, -1); paint(); }
+    else if (/^[A-Z]$/.test(k) && typed.length < n) { typed += k; paint(); }
+  };
+  ["QWERTYUIOP", "ASDFGHJKL", "↵ZXCVBNM⌫"].forEach((line) => keys.append(h("div.ch-krow", [...line].map((c) => {
+    const k = c === "↵" ? "ENTER" : c;
+    return h("button.ch-key", { type: "button", dataset: /^[A-Z]$/.test(k) ? { k } : {}, class: k.length > 1 || c === "⌫" ? "wide" : "", onclick: () => press(k) }, c === "↵" ? "Enter" : c);
+  }))));
+  const onKey = (e) => {
+    if (!area.isConnected) { document.removeEventListener("keydown", onKey); return; }
+    if (e.metaKey || e.ctrlKey || e.altKey || e.target.closest?.("input, textarea")) return;
+    const k = e.key === "Enter" ? "ENTER" : e.key === "Backspace" ? "⌫" : e.key.toUpperCase();
+    if (k === "ENTER" || k === "⌫" || /^[A-Z]$/.test(k)) { e.preventDefault(); press(k); }
+  };
+  document.addEventListener("keydown", onKey);
+  paint();
+  area.append(grid, keys, h("p.muted.small.ch-hint", "Type on your keyboard or tap the letters. 🟩 right spot · 🟨 in the word · ⬜ not in it."));
+}
+
+const PEG = ["", "#ef4444", "#f59e0b", "#22c55e", "#3b82f6", "#a855f7", "#ec4899"];
+
+/** Code breaker: four coloured digits; the server answers with ● (right place) and ○ (wrong place). */
+function playCode(area, puzzle, done, { reveal }) {
+  const guesses = puzzle.guesses.slice();
+  let typed = "";
+  let sending = false;
+  const peg = (d) => h(`span.ch-peg${d ? "" : ".blank"}`, { style: d ? { "--c": PEG[d] } : {} }, d || "");
+  const board = h("div.ch-code");
+  const left = h("span.muted.small");
+  const paint = () => {
+    clear(board,
+      guesses.map((g, i) => h("div.ch-crow", h("span.ch-cnum", String(i + 1)), [...g.code].map((d) => peg(Number(d))),
+        h("span.ch-fb", { title: `${g.exact} right place, ${g.near} wrong place` },
+          Array.from({ length: g.exact }, () => h("i.exact")), Array.from({ length: g.near }, () => h("i.near")),
+          Array.from({ length: 4 - g.exact - g.near }, () => h("i"))))),
+      guesses.length < puzzle.tries ? h("div.ch-crow.current", h("span.ch-cnum", String(guesses.length + 1)),
+        Array.from({ length: 4 }, (_, i) => peg(Number(typed[i]) || 0))) : null);
+    left.textContent = `${puzzle.tries - guesses.length} tries left`;
+  };
+  async function submit() {
+    if (sending) return;
+    if (typed.length !== 4) { shake(board); return; }
+    sending = true;
+    try {
+      const r = await api.post("/challenge/today/guess", { guess: typed });
+      guesses.push(r.entry);
+      typed = "";
+      paint();
+      if (r.answer) reveal([...r.answer].join(" "));
+      if (r.solved) sounds.sent();
+      done(r.attempt);
+    } catch (err) { toast(err.message, "error"); } finally { sending = false; }
+  }
+  const add = (d) => { if (typed.length < 4) { typed += d; paint(); } };
+  const pad = h("div.ch-pad",
+    [1, 2, 3, 4, 5, 6].map((d) => h("button.ch-pad-btn", { type: "button", style: { "--c": PEG[d] }, onclick: () => add(String(d)), "aria-label": `Digit ${d}` }, String(d))),
+    h("button.btn.sm", { type: "button", onclick: () => { typed = typed.slice(0, -1); paint(); } }, "⌫"),
+    h("button.btn.sm.primary", { type: "button", onclick: submit }, "Guess"));
+  const onKey = (e) => {
+    if (!area.isConnected) { document.removeEventListener("keydown", onKey); return; }
+    if (e.target.closest?.("input, textarea")) return;
+    if (/^[1-6]$/.test(e.key)) add(e.key);
+    else if (e.key === "Backspace") { typed = typed.slice(0, -1); paint(); }
+    else if (e.key === "Enter") { e.preventDefault(); submit(); }
+  };
+  document.addEventListener("keydown", onKey);
+  paint();
+  area.append(h("div.ch-code-wrap", board, h("div.ch-code-side", pad, left,
+    h("p.muted.small", "● right digit, right place  ·  ○ right digit, wrong place. Keys 1-6, Backspace and Enter work too."))));
+}
+
+/** Lights out: played in the page; the list of presses is replayed on the server. */
+function playLights(area, puzzle, done) {
+  let board = puzzle.board.slice();
+  let presses = [];
+  let sending = false;
+  const counter = h("span.ch-moves.ch-lights-count");
+  const grid = h("div.ch-lights");
+  const cells = board.map((_, i) => {
+    const b = h("button.ch-light", { type: "button", "aria-label": `Light ${i + 1}`, onclick: () => press(i) });
+    grid.append(b);
+    return b;
+  });
+  const group = (i) => {
+    const r = Math.floor(i / 5), c = i % 5;
+    return [[r, c], [r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]].filter(([y, x]) => y >= 0 && y < 5 && x >= 0 && x < 5).map(([y, x]) => y * 5 + x);
+  };
+  const paint = () => {
+    cells.forEach((b, i) => { b.classList.toggle("on", Boolean(board[i])); b.setAttribute("aria-pressed", String(Boolean(board[i]))); });
+    const lit = board.filter(Boolean).length;
+    counter.textContent = `${presses.length} press${presses.length === 1 ? "" : "es"} · ${lit} light${lit === 1 ? "" : "s"} on`;
+  };
+  async function press(i) {
+    if (sending) return;
+    group(i).forEach((j) => { board[j] ^= 1; });
+    presses.push(i);
+    paint();
+    if (board.every((v) => !v)) {
+      sending = true;
+      try { done((await api.post("/challenge/today/lights", { moves: presses })).attempt); } catch (err) { toast(err.message, "error"); sending = false; }
+    }
+  }
+  const reset = h("button.btn.ghost.sm", { type: "button", onclick: () => { board = puzzle.board.slice(); presses = []; paint(); } }, "Start over");
+  paint();
+  area.append(h("div.ch-slide-wrap", grid, h("div.ch-slide-side", counter, reset,
+    h("p.muted.small", "Turn every light off. Pressing a light flips it and the lights above, below, left and right of it. Starting over keeps the clock running."))));
+}
+
+/** Number sequences: like the math sprint, one sequence at a time. */
+function playSeq(area, puzzle, done) {
+  let current = puzzle.current;
+  const q = h("div.ch-q.ch-seq");
+  const progress = h("div.ch-progress");
+  const input = h("input.ch-answer", { type: "text", inputmode: "numeric", autocomplete: "off", "aria-label": "Next number", placeholder: "?" });
+  const form = h("form.ch-math.ch-seq-form", q, h("span.ch-eq", "→"), input);
+  const paint = () => {
+    clear(q, (puzzle.questions[current] || "").split(", ").map((t) => h(`span${t === "?" ? ".ask" : ""}`, t)));
+    clear(progress, puzzle.questions.map((_, i) => h(`span${i < current ? ".done" : i === current ? ".now" : ""}`)));
+  };
+  let sending = false;
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (sending || !input.value.trim()) return;
+    sending = true;
+    try {
+      const r = await api.post("/challenge/today/answer", { item: current, answer: input.value });
+      if (r.correct) { current += 1; input.value = ""; form.classList.remove("pop"); void form.offsetWidth; form.classList.add("pop"); sounds.sent(); }
+      else { shake(form); input.select(); }
+      if (!done(r.attempt)) paint();
+    } catch (err) { toast(err.message, "error"); } finally { sending = false; }
+  });
+  paint();
+  area.append(progress, form, h("p.muted.small.ch-hint", "What comes next? Type the number and press Enter. Look at the gaps between numbers."));
+  setTimeout(() => input.focus(), 0);
+}
+
+/** Haunted house (Halloween): rooms are opened one by one by the server - ghosts never reach the page early. */
+function playHaunted(area, puzzle, done) {
+  const size = puzzle.size;
+  const cells = { ...puzzle.cells };
+  const marks = new Set();
+  let markMode = false;
+  let pending = false;
+  const grid = h("div.ch-haunt", { style: { "--size": size } });
+  const ghostsLeft = h("span.ch-haunt-stat");
+  const pumpkinsEl = h("span.ch-haunt-stat");
+  const modeBtn = h("button.btn.sm", { type: "button", "aria-pressed": "false", onclick: () => { markMode = !markMode; modeBtn.setAttribute("aria-pressed", String(markMode)); modeBtn.textContent = markMode ? "🕯️ Mark mode: on" : "🕯️ Mark mode: off"; } }, "🕯️ Mark mode: off");
+  const rooms = Array.from({ length: size * size }, (_, i) => {
+    const b = h("button.ch-room", {
+      type: "button", "aria-label": `Room ${Math.floor(i / size) + 1}-${(i % size) + 1}`,
+      onclick: () => (markMode ? toggleMark(i) : open(i)),
+      oncontextmenu: (e) => { e.preventDefault(); toggleMark(i); },
+    });
+    grid.append(b);
+    return b;
+  });
+  const NUM = ["", "#7dd3fc", "#86efac", "#fcd34d", "#fdba74", "#f87171", "#e879f9", "#f472b6", "#fff"];
+  const paint = () => {
+    rooms.forEach((b, i) => {
+      const c = cells[String(i)];
+      b.className = "ch-room";
+      b.textContent = "";
+      b.style.removeProperty("--num");
+      if (c?.ghost) { b.classList.add("ghost"); b.textContent = "👻"; }
+      else if (c) {
+        b.classList.add("open");
+        if (c.pumpkin) { b.classList.add("pumpkin"); b.append(h("span", "🎃"), c.n ? h("sup", String(c.n)) : null); }
+        else if (c.n) { b.textContent = String(c.n); b.style.setProperty("--num", NUM[c.n]); }
+      } else if (marks.has(i)) { b.classList.add("marked"); b.textContent = "🕯️"; }
+      b.disabled = Boolean(c);
+    });
+    const found = Object.values(cells).filter((c) => c.ghost).length;
+    ghostsLeft.textContent = `👻 ${Math.max(puzzle.ghosts - found - marks.size, 0)} ghosts unmarked`;
+    const pumpkins = Object.values(cells).filter((c) => c.pumpkin).length;
+    pumpkinsEl.textContent = `🎃 ${pumpkins} / ${puzzle.pumpkins} pumpkins`;
+  };
+  const toggleMark = (i) => { if (cells[String(i)]) return; if (marks.has(i)) marks.delete(i); else marks.add(i); paint(); };
+  async function open(i) {
+    if (pending || cells[String(i)] || marks.has(i)) return;
+    pending = true;
+    try {
+      const r = await api.post("/challenge/today/reveal", { index: i });
+      Object.assign(cells, r.cells);
+      paint();
+      if (r.boo) boo(area);
+      if (r.pumpkins) floatText(rooms[Object.keys(r.cells).map(Number).find((k) => r.cells[k].pumpkin)] || rooms[i], `🎃 −${5 * r.pumpkins} s`);
+      if (r.all_ghosts) r.all_ghosts.forEach((g) => { if (!cells[String(g)]) { cells[String(g)] = { ghost: true }; } });
+      if (r.all_ghosts) paint();
+      setTimeout(() => done(r.attempt), r.attempt.status === "done" ? 800 : 0);
+    } catch (err) { toast(err.message, "error"); } finally { pending = false; }
+  }
+  paint();
+  area.append(
+    h("div.ch-haunt-bar", ghostsLeft, pumpkinsEl, modeBtn),
+    h("div.ch-haunt-wrap", grid),
+    h("p.muted.small.ch-hint", "A number = ghosts in the 8 rooms around it. Right-click (or Mark mode) to put a candle on a haunted room. Open every safe room to escape!"));
+}
+
+function boo(host) {
+  sounds.mention?.();
+  const el = h("div.ch-boo", { "aria-hidden": "true" }, h("span", "👻"), h("strong", "BOO!"), h("small", "+15 s"));
+  host.append(el);
+  setTimeout(() => el.remove(), 1400);
+}
+
+function floatText(anchor, text) {
+  const r = anchor.getBoundingClientRect();
+  const el = h("div.ch-float", { style: { left: `${r.left + r.width / 2}px`, top: `${r.top}px` } }, text);
+  document.body.append(el);
+  setTimeout(() => el.remove(), 1300);
+}
+
+/** Bats flapping across the Halloween card. */
+function bats() {
+  return h("div.ch-bats", { "aria-hidden": "true" }, Array.from({ length: 5 }, (_, i) => h("span", { style: { "--i": i } }, "🦇")));
+}
+
 // ============================================================================ confetti
-function confetti(host) {
+function confetti(host, spooky = false) {
   if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
   const layer = h("div.ch-confetti", { "aria-hidden": "true" });
-  const colors = ["#6366f1", "#f59e0b", "#10b981", "#ef4444", "#3b82f6", "#ec4899"];
+  const colors = spooky ? ["#f97316", "#a855f7", "#fbbf24", "#16a34a", "#f97316", "#1f2937"] : ["#6366f1", "#f59e0b", "#10b981", "#ef4444", "#3b82f6", "#ec4899"];
   for (let i = 0; i < 70; i++) {
     const p = h("i");
     p.style.cssText = `left:${Math.random() * 100}%;background:${colors[i % colors.length]};--dx:${(Math.random() - 0.5) * 160}px;--r:${Math.random() * 720 - 360}deg;animation-delay:${Math.random() * 0.4}s;animation-duration:${1.6 + Math.random() * 1.2}s`;
